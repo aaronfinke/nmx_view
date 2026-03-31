@@ -1,0 +1,212 @@
+import React, { useState, useCallback, useRef, useEffect } from "react";
+
+interface TofRangeSliderProps {
+  tofMin: number; // absolute min (ns)
+  tofMax: number; // absolute max (ns)
+  tofRange: [number, number]; // current selection (ns)
+  onTofRangeChange: (range: [number, number]) => void;
+  unit?: string; // "ns" | "µs" | "ms"
+}
+
+export const TofRangeSlider: React.FC<TofRangeSliderProps> = ({
+  tofMin,
+  tofMax,
+  tofRange,
+  onTofRangeChange,
+  unit = "ns",
+}) => {
+  const displayScale = unit === "µs" ? 1e-3 : unit === "ms" ? 1e-6 : 1;
+
+  const [localRange, setLocalRange] = useState<[number, number]>(tofRange);
+  const [windowWidth, setWindowWidth] = useState<number | null>(null);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    setLocalRange(tofRange);
+  }, [tofRange]);
+
+  const commitRange = useCallback(
+    (range: [number, number]) => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+      debounceRef.current = setTimeout(() => {
+        onTofRangeChange(range);
+      }, 250);
+    },
+    [onTofRangeChange]
+  );
+
+  // Clamp a range to [tofMin, tofMax]
+  const clampRange = useCallback(
+    (lo: number, hi: number): [number, number] => [
+      Math.max(tofMin, Math.min(lo, tofMax)),
+      Math.min(tofMax, Math.max(hi, tofMin)),
+    ],
+    [tofMin, tofMax]
+  );
+
+  // Handle individual min/max thumb changes (free mode)
+  const handleChange = useCallback(
+    (idx: 0 | 1, displayValue: number) => {
+      const nsValue = displayValue / displayScale;
+      const newRange: [number, number] = [...localRange];
+      newRange[idx] = nsValue;
+      if (newRange[0] > newRange[1]) {
+        if (idx === 0) newRange[0] = newRange[1];
+        else newRange[1] = newRange[0];
+      }
+      const clamped = clampRange(newRange[0], newRange[1]);
+      setLocalRange(clamped);
+      commitRange(clamped);
+    },
+    [localRange, displayScale, clampRange, commitRange]
+  );
+
+  // Handle center slider change (window mode)
+  const handleCenterChange = useCallback(
+    (displayCenter: number) => {
+      if (windowWidth === null) return;
+      const widthNs = windowWidth / displayScale;
+      const centerNs = displayCenter / displayScale;
+      let lo = centerNs - widthNs / 2;
+      let hi = centerNs + widthNs / 2;
+      // Shift window if it exceeds bounds
+      if (lo < tofMin) {
+        lo = tofMin;
+        hi = tofMin + widthNs;
+      }
+      if (hi > tofMax) {
+        hi = tofMax;
+        lo = tofMax - widthNs;
+      }
+      const clamped = clampRange(lo, hi);
+      setLocalRange(clamped);
+      commitRange(clamped);
+    },
+    [windowWidth, displayScale, tofMin, tofMax, clampRange, commitRange]
+  );
+
+  // When window width is set, snap the current range to that width
+  const handleWindowWidthChange = useCallback(
+    (val: string) => {
+      const parsed = parseFloat(val);
+      if (!val || isNaN(parsed) || parsed <= 0) {
+        setWindowWidth(null);
+        return;
+      }
+      setWindowWidth(parsed);
+      // Snap range: keep current center, apply new width
+      const widthNs = parsed / displayScale;
+      const currentCenterNs = (localRange[0] + localRange[1]) / 2;
+      let lo = currentCenterNs - widthNs / 2;
+      let hi = currentCenterNs + widthNs / 2;
+      if (lo < tofMin) {
+        lo = tofMin;
+        hi = tofMin + widthNs;
+      }
+      if (hi > tofMax) {
+        hi = tofMax;
+        lo = tofMax - widthNs;
+      }
+      const clamped = clampRange(lo, hi);
+      setLocalRange(clamped);
+      commitRange(clamped);
+    },
+    [localRange, displayScale, tofMin, tofMax, clampRange, commitRange]
+  );
+
+  const displayMin = tofMin * displayScale;
+  const displayMax = tofMax * displayScale;
+  const step = (displayMax - displayMin) / 1000;
+
+  // Percentage positions for the filled track
+  const fullRange = displayMax - displayMin || 1;
+  const loPercent =
+    ((localRange[0] * displayScale - displayMin) / fullRange) * 100;
+  const hiPercent =
+    ((localRange[1] * displayScale - displayMin) / fullRange) * 100;
+
+  const isWindowMode = windowWidth !== null && windowWidth > 0;
+  const centerDisplay = ((localRange[0] + localRange[1]) / 2) * displayScale;
+
+  return (
+    <div className="tof-slider-panel">
+      <div className="tof-slider-row">
+        <span className="tof-label">TOF ({unit}):</span>
+        <input
+          type="number"
+          className="tof-number"
+          value={(localRange[0] * displayScale).toFixed(1)}
+          step={step}
+          onChange={(e) => handleChange(0, parseFloat(e.target.value) || 0)}
+        />
+        <div className="dual-range-container">
+          <div
+            className="dual-range-track-fill"
+            style={{
+              left: `${loPercent}%`,
+              width: `${hiPercent - loPercent}%`,
+              cursor: isWindowMode ? "grab" : undefined,
+            }}
+          />
+          {isWindowMode ? (
+            <input
+              type="range"
+              className="dual-range-input center-slider"
+              min={displayMin}
+              max={displayMax}
+              step={step}
+              value={centerDisplay}
+              onChange={(e) =>
+                handleCenterChange(parseFloat(e.target.value))
+              }
+            />
+          ) : (
+            <>
+              <input
+                type="range"
+                className="dual-range-input"
+                min={displayMin}
+                max={displayMax}
+                step={step}
+                value={localRange[0] * displayScale}
+                onChange={(e) =>
+                  handleChange(0, parseFloat(e.target.value))
+                }
+              />
+              <input
+                type="range"
+                className="dual-range-input"
+                min={displayMin}
+                max={displayMax}
+                step={step}
+                value={localRange[1] * displayScale}
+                onChange={(e) =>
+                  handleChange(1, parseFloat(e.target.value))
+                }
+              />
+            </>
+          )}
+        </div>
+        <input
+          type="number"
+          className="tof-number"
+          value={(localRange[1] * displayScale).toFixed(1)}
+          step={step}
+          onChange={(e) => handleChange(1, parseFloat(e.target.value) || 0)}
+        />
+        <span className="tof-window-sep">|</span>
+        <span className="tof-label">Window:</span>
+        <input
+          type="number"
+          className="tof-number tof-window-input"
+          placeholder="off"
+          value={windowWidth ?? ""}
+          step={step}
+          min={0}
+          onChange={(e) => handleWindowWidthChange(e.target.value)}
+        />
+        <span className="tof-label-small">{unit}</span>
+      </div>
+    </div>
+  );
+};
