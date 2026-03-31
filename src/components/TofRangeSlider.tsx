@@ -132,6 +132,37 @@ export const TofRangeSlider: React.FC<TofRangeSliderProps> = ({
     [windowWidth, displayScale, localRange, tofMin, tofMax, clampRange, commitRange]
   );
 
+  // Arrow key handler: shift window by its full width
+  const shiftWindow = useCallback(
+    (direction: -1 | 1) => {
+      if (!windowEnabled || windowWidth <= 0) return;
+      const widthNs = windowWidth / displayScale;
+      let lo = localRange[0] + direction * widthNs;
+      let hi = localRange[1] + direction * widthNs;
+      if (lo < tofMin) { lo = tofMin; hi = tofMin + widthNs; }
+      if (hi > tofMax) { hi = tofMax; lo = tofMax - widthNs; }
+      const clamped = clampRange(lo, hi);
+      setLocalRange(clamped);
+      commitRange(clamped);
+    },
+    [windowEnabled, windowWidth, displayScale, localRange, tofMin, tofMax, clampRange, commitRange]
+  );
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (!windowEnabled || windowWidth <= 0) return;
+      if (e.key === "ArrowLeft") {
+        e.preventDefault();
+        shiftWindow(-1);
+      } else if (e.key === "ArrowRight") {
+        e.preventDefault();
+        shiftWindow(1);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [windowEnabled, windowWidth, shiftWindow]);
+
   const displayMin = tofMin * displayScale;
   const displayMax = tofMax * displayScale;
   const step = (displayMax - displayMin) / 1000;

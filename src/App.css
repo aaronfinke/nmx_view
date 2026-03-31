@@ -74,10 +74,23 @@
   font-size: 0.85rem;
 }
 
-/* Color bar domain inputs – positioned over the color bar on right side of chart */
+/* Shared color bar – sits to the right of all panels */
+.shared-colorbar {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 70px;
+  flex-shrink: 0;
+  padding: 20px 0 10px;
+}
+
+.colorbar-gradient-wrapper {
+  flex: 1;
+  width: 100%;
+  min-height: 0;
+}
+
 .colorbar-domain-input {
-  position: absolute;
-  right: 2px;
   width: 58px;
   padding: 2px 4px;
   font-size: 0.7rem;
@@ -86,7 +99,7 @@
   border-radius: 3px;
   background: rgba(255, 255, 255, 0.85);
   color: #003366;
-  z-index: 5;
+  flex-shrink: 0;
 }
 .colorbar-domain-input::placeholder {
   color: rgba(0, 51, 102, 0.4);
@@ -97,10 +110,10 @@
   background: #ffffff;
 }
 .colorbar-domain-max {
-  top: 28px;
+  margin-bottom: 4px;
 }
 .colorbar-domain-min {
-  bottom: 8px;
+  margin-top: 4px;
 }
 
 .app-main {
@@ -110,7 +123,11 @@
 }
 
 /* Detector Image Panel */
-.detector-panel-wrapper {
+.detector-panels-row {
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  gap: 8px;
   position: relative;
 }
 
@@ -134,12 +151,14 @@
   text-align: center;
 }
 
-/* Hide h5web axis ticks but keep axis labels for tooltip references */
-.detector-image-panel [class*="axis"] text[class*="tick"],
-.detector-image-panel [class*="axis"] line {
-  display: none;
+/* Hide h5web's built-in color bar inside each panel */
+.detector-image-panel [class*="_colorBar_"] {
+  display: none !important;
 }
-.detector-image-panel [class*="axis"] text[class*="label"] {
+
+/* Hide h5web axis ticks and labels */
+.detector-image-panel [class*="axis"] text,
+.detector-image-panel [class*="axis"] line {
   display: none;
 }
 
