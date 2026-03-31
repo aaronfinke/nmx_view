@@ -41,6 +41,7 @@ export const FileLoader: React.FC<FileLoaderProps> = ({
       <div className="file-loader-content">
         <h2>NMX Event Data Viewer</h2>
         <p>Load an HDF5/NeXus file containing NXEventData</p>
+        <p>All processing happens locally in the browser- no remote loading needed!</p>
         {loading ? (
           <div className="loading-spinner">
             <div className="spinner" />

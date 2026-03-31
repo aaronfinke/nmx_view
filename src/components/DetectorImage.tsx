@@ -17,6 +17,11 @@ interface DetectorImageProps {
   size: number;
   /** User-overridden domain [min, max]; null entries use auto-computed value */
   userDomain?: [number | null, number | null];
+  /** Called when user edits the domain min/max on the color bar */
+  onDomainChange?: (which: "min" | "max", value: string) => void;
+  /** Current user-entered string values for domain min/max (for controlled inputs) */
+  domainMinStr?: string;
+  domainMaxStr?: string;
 }
 
 const LOG_SCALES: readonly string[] = [ScaleType.Log, ScaleType.SymLog];
@@ -27,6 +32,9 @@ export const DetectorImage: React.FC<DetectorImageProps> = ({
   colorScale = ScaleType.Log,
   size,
   userDomain,
+  onDomainChange,
+  domainMinStr = "",
+  domainMaxStr = "",
 }) => {
   const { image, shape, totalEvents } = imageResult;
 
@@ -69,6 +77,7 @@ export const DetectorImage: React.FC<DetectorImageProps> = ({
           margin: "0 auto",
           display: "flex",
           flexDirection: "column",
+          position: "relative",
         }}
       >
         <HeatmapVis
@@ -83,6 +92,26 @@ export const DetectorImage: React.FC<DetectorImageProps> = ({
         >
           <DefaultInteractions />
         </HeatmapVis>
+        {onDomainChange && (
+          <>
+            <input
+              type="number"
+              className="colorbar-domain-input colorbar-domain-max"
+              value={domainMaxStr}
+              placeholder={String(Math.round(domain[1]))}
+              title="Color bar max"
+              onChange={(e) => onDomainChange("max", e.target.value)}
+            />
+            <input
+              type="number"
+              className="colorbar-domain-input colorbar-domain-min"
+              value={domainMinStr}
+              placeholder={String(Math.round(domain[0]))}
+              title="Color bar min"
+              onChange={(e) => onDomainChange("min", e.target.value)}
+            />
+          </>
+        )}
       </div>
     </div>
   );

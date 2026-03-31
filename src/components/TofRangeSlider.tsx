@@ -18,7 +18,8 @@ export const TofRangeSlider: React.FC<TofRangeSliderProps> = ({
   const displayScale = unit === "µs" ? 1e-3 : unit === "ms" ? 1e-6 : 1;
 
   const [localRange, setLocalRange] = useState<[number, number]>(tofRange);
-  const [windowWidth, setWindowWidth] = useState<number | null>(null);
+  const [windowEnabled, setWindowEnabled] = useState(false);
+  const [windowWidth, setWindowWidth] = useState<number>(3000);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
@@ -85,15 +86,13 @@ export const TofRangeSlider: React.FC<TofRangeSliderProps> = ({
     [windowWidth, displayScale, tofMin, tofMax, clampRange, commitRange]
   );
 
-  // When window width is set, snap the current range to that width
+  // When window width changes, snap the current range to that width
   const handleWindowWidthChange = useCallback(
     (val: string) => {
       const parsed = parseFloat(val);
-      if (!val || isNaN(parsed) || parsed <= 0) {
-        setWindowWidth(null);
-        return;
-      }
+      if (isNaN(parsed) || parsed <= 0) return;
       setWindowWidth(parsed);
+      if (!windowEnabled) return;
       // Snap range: keep current center, apply new width
       const widthNs = parsed / displayScale;
       const currentCenterNs = (localRange[0] + localRange[1]) / 2;
@@ -111,7 +110,26 @@ export const TofRangeSlider: React.FC<TofRangeSliderProps> = ({
       setLocalRange(clamped);
       commitRange(clamped);
     },
-    [localRange, displayScale, tofMin, tofMax, clampRange, commitRange]
+    [windowEnabled, localRange, displayScale, tofMin, tofMax, clampRange, commitRange]
+  );
+
+  // Toggle window mode on/off
+  const handleWindowToggle = useCallback(
+    (checked: boolean) => {
+      setWindowEnabled(checked);
+      if (checked && windowWidth > 0) {
+        const widthNs = windowWidth / displayScale;
+        const currentCenterNs = (localRange[0] + localRange[1]) / 2;
+        let lo = currentCenterNs - widthNs / 2;
+        let hi = currentCenterNs + widthNs / 2;
+        if (lo < tofMin) { lo = tofMin; hi = tofMin + widthNs; }
+        if (hi > tofMax) { hi = tofMax; lo = tofMax - widthNs; }
+        const clamped = clampRange(lo, hi);
+        setLocalRange(clamped);
+        commitRange(clamped);
+      }
+    },
+    [windowWidth, displayScale, localRange, tofMin, tofMax, clampRange, commitRange]
   );
 
   const displayMin = tofMin * displayScale;
@@ -125,7 +143,7 @@ export const TofRangeSlider: React.FC<TofRangeSliderProps> = ({
   const hiPercent =
     ((localRange[1] * displayScale - displayMin) / fullRange) * 100;
 
-  const isWindowMode = windowWidth !== null && windowWidth > 0;
+  const isWindowMode = windowEnabled && windowWidth > 0;
   const centerDisplay = ((localRange[0] + localRange[1]) / 2) * displayScale;
 
   return (
@@ -195,14 +213,21 @@ export const TofRangeSlider: React.FC<TofRangeSliderProps> = ({
           onChange={(e) => handleChange(1, parseFloat(e.target.value) || 0)}
         />
         <span className="tof-window-sep">|</span>
-        <span className="tof-label">Window:</span>
+        <label className="tof-window-toggle">
+          <input
+            type="checkbox"
+            checked={windowEnabled}
+            onChange={(e) => handleWindowToggle(e.target.checked)}
+          />
+          Window:
+        </label>
         <input
           type="number"
           className="tof-number tof-window-input"
-          placeholder="off"
-          value={windowWidth ?? ""}
+          value={windowWidth}
           step={step}
           min={0}
+          disabled={!windowEnabled}
           onChange={(e) => handleWindowWidthChange(e.target.value)}
         />
         <span className="tof-label-small">{unit}</span>

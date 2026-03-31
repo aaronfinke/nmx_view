@@ -53,12 +53,33 @@
   font-size: 0.85rem;
 }
 
-.domain-input {
-  width: 70px;
+/* Color bar domain inputs – positioned over the color bar on right side of chart */
+.colorbar-domain-input {
+  position: absolute;
+  right: 2px;
+  width: 58px;
+  padding: 2px 4px;
+  font-size: 0.7rem;
+  text-align: center;
+  border: 1px solid rgba(0, 51, 102, 0.3);
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.85);
+  color: #003366;
+  z-index: 5;
 }
-
-.domain-input::placeholder {
-  color: rgba(255, 255, 255, 0.4);
+.colorbar-domain-input::placeholder {
+  color: rgba(0, 51, 102, 0.4);
+  font-size: 0.65rem;
+}
+.colorbar-domain-input:focus {
+  outline: 1px solid #0099DC;
+  background: #ffffff;
+}
+.colorbar-domain-max {
+  top: 28px;
+}
+.colorbar-domain-min {
+  bottom: 8px;
 }
 
 .app-main {
@@ -211,8 +232,28 @@
   margin: 0 0.25rem;
 }
 
+.tof-window-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.85rem;
+  color: #003366;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.tof-window-toggle input[type="checkbox"] {
+  accent-color: #0099DC;
+  cursor: pointer;
+}
+
 .tof-window-input {
   width: 80px !important;
+}
+
+.tof-window-input:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 
 .tof-label-small {

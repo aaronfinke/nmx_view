@@ -221,26 +221,7 @@ function App() {
               <option value={ScaleType.Sqrt}>Sqrt</option>
             </select>
           </div>
-          <div className="control-group">
-            <label>Min:</label>
-            <input
-              type="number"
-              className="domain-input"
-              value={domainMin}
-              placeholder="auto"
-              onChange={(e) => setDomainMin(e.target.value)}
-            />
-          </div>
-          <div className="control-group">
-            <label>Max:</label>
-            <input
-              type="number"
-              className="domain-input"
-              value={domainMax}
-              placeholder="auto"
-              onChange={(e) => setDomainMax(e.target.value)}
-            />
-          </div>
+
         </div>
       </header>
 
@@ -260,6 +241,11 @@ function App() {
                   domainMin !== "" ? Number(domainMin) : null,
                   domainMax !== "" ? Number(domainMax) : null,
                 ]}
+                domainMinStr={domainMin}
+                domainMaxStr={domainMax}
+                onDomainChange={(which, val) =>
+                  which === "min" ? setDomainMin(val) : setDomainMax(val)
+                }
               />
             </div>
             <TofRangeSlider
