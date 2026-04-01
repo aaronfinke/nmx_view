@@ -194,10 +194,11 @@
   display: none !important;
 }
 
-/* Hide h5web axis ticks and labels */
+/* Hide h5web axis ticks and labels — use visibility:hidden (not display:none)
+   to preserve layout space so h5web's coordinate calculations stay correct */
 .detector-image-panel [class*="axis"] text,
 .detector-image-panel [class*="axis"] line {
-  display: none;
+  visibility: hidden;
 }
 
 .detector-image-panel h3 {

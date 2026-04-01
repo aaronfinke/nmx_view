@@ -1,10 +1,6 @@
 import React, { useMemo } from "react";
-import {
-  HeatmapVis,
-  ScaleType,
-  DefaultInteractions,
-} from "@h5web/lib";
-import type { ColorScaleType } from "@h5web/lib";
+import { HeatmapVis, ScaleType } from "@h5web/lib";
+import type { ColorScaleType, DefaultInteractionsConfig } from "@h5web/lib";
 import type { Domain } from "@h5web/lib";
 import ndarray from "ndarray";
 import type { DetectorImageResult } from "../lib/event-data";
@@ -17,6 +13,8 @@ interface DetectorImageProps {
   size: number;
   /** Shared domain from parent */
   domain: Domain;
+  /** Single-panel mode: enables select-to-zoom */
+  singlePanel?: boolean;
 }
 
 export const DetectorImage: React.FC<DetectorImageProps> = ({
@@ -25,6 +23,7 @@ export const DetectorImage: React.FC<DetectorImageProps> = ({
   colorScale = ScaleType.Log,
   size,
   domain,
+  singlePanel = false,
 }) => {
   const { image, shape, totalEvents } = imageResult;
 
@@ -33,7 +32,25 @@ export const DetectorImage: React.FC<DetectorImageProps> = ({
     [image, shape]
   );
 
-  if (size <= 0) return null;
+  const interactions: DefaultInteractionsConfig = singlePanel
+    ? {
+        selectToZoom: { modifierKey: [] as const },
+        zoom: false,
+        pan: { modifierKey: "Shift" as const },
+        xAxisZoom: false,
+        yAxisZoom: false,
+        xSelectToZoom: false,
+        ySelectToZoom: false,
+      }
+    : {
+        pan: false,
+        zoom: false,
+        xAxisZoom: false,
+        yAxisZoom: false,
+        selectToZoom: false,
+        xSelectToZoom: false,
+        ySelectToZoom: false,
+      };
 
   return (
     <div className="detector-image-panel">
@@ -55,9 +72,8 @@ export const DetectorImage: React.FC<DetectorImageProps> = ({
           scaleType={colorScale}
           aspect="equal"
           showGrid={false}
-        >
-          <DefaultInteractions />
-        </HeatmapVis>
+          interactions={interactions}
+        />
       </div>
     </div>
   );
