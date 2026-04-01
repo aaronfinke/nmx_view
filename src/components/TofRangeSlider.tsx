@@ -70,7 +70,6 @@ export const TofRangeSlider: React.FC<TofRangeSliderProps> = ({
       const centerNs = displayCenter / displayScale;
       let lo = centerNs - widthNs / 2;
       let hi = centerNs + widthNs / 2;
-      // Shift window if it exceeds bounds
       if (lo < tofMin) {
         lo = tofMin;
         hi = tofMin + widthNs;

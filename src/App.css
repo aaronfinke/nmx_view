@@ -189,7 +189,7 @@
 .dual-range-container {
   flex: 1;
   position: relative;
-  height: 28px;
+  height: 36px;
 }
 
 .dual-range-container::before {
@@ -198,20 +198,20 @@
   top: 50%;
   left: 0;
   right: 0;
-  height: 4px;
+  height: 10px;
   transform: translateY(-50%);
   background: #cce6f5;
-  border-radius: 2px;
+  border-radius: 5px;
   pointer-events: none;
 }
 
 .dual-range-track-fill {
   position: absolute;
   top: 50%;
-  height: 4px;
+  height: 10px;
   transform: translateY(-50%);
   background: #0099DC;
-  border-radius: 2px;
+  border-radius: 5px;
   pointer-events: none;
   z-index: 1;
 }
@@ -234,8 +234,8 @@
 .dual-range-input::-webkit-slider-thumb {
   -webkit-appearance: none;
   appearance: none;
-  width: 16px;
-  height: 16px;
+  width: 22px;
+  height: 22px;
   border-radius: 50%;
   background: #003366;
   border: 2px solid #fff;
@@ -245,8 +245,8 @@
 }
 
 .dual-range-input::-moz-range-thumb {
-  width: 16px;
-  height: 16px;
+  width: 22px;
+  height: 22px;
   border-radius: 50%;
   background: #003366;
   border: 2px solid #fff;
