@@ -362,22 +362,43 @@
   background: #003366;
 }
 
-.loading-spinner {
+.loading-progress {
   margin-top: 2rem;
+  width: 100%;
+  max-width: 400px;
+  margin-left: auto;
+  margin-right: auto;
 }
 
-.spinner {
-  width: 48px;
-  height: 48px;
-  border: 4px solid #cce6f5;
-  border-top-color: #0099DC;
-  border-radius: 50%;
-  animation: spin 0.8s linear infinite;
-  margin: 0 auto 1rem;
+.progress-bar-container {
+  width: 100%;
+  height: 24px;
+  background: #e0e0e0;
+  border-radius: 12px;
+  overflow: hidden;
+  border: 1px solid #ccc;
 }
 
-@keyframes spin {
-  to { transform: rotate(360deg); }
+.progress-bar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #0099DC, #003366);
+  border-radius: 12px;
+  transition: width 0.3s ease;
+  min-width: 0;
+}
+
+.progress-label {
+  margin-top: 0.75rem;
+  color: #003366;
+  font-size: 0.9rem;
+  font-weight: 500;
+}
+
+.progress-percent {
+  color: #0099DC;
+  font-size: 1.2rem;
+  font-weight: 700;
+  margin-top: 0.25rem;
 }
 
 /* Status Bar */

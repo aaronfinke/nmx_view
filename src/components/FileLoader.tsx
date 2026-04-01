@@ -3,11 +3,15 @@ import React, { useCallback } from "react";
 interface FileLoaderProps {
   onFileLoaded: (file: File) => void;
   loading: boolean;
+  progress?: number;
+  progressLabel?: string;
 }
 
 export const FileLoader: React.FC<FileLoaderProps> = ({
   onFileLoaded,
   loading,
+  progress = 0,
+  progressLabel = "",
 }) => {
   const handleDrop = useCallback(
     (e: React.DragEvent) => {
@@ -44,9 +48,15 @@ export const FileLoader: React.FC<FileLoaderProps> = ({
         <p>Uses <a href="https://h5web.panosc.eu">h5web</a> to load and process data.</p>
         <p>All processing happens locally in the browser- no remote loading of data!</p>
         {loading ? (
-          <div className="loading-spinner">
-            <div className="spinner" />
-            <p>Loading file...</p>
+          <div className="loading-progress">
+            <div className="progress-bar-container">
+              <div
+                className="progress-bar-fill"
+                style={{ width: `${Math.min(progress, 100)}%` }}
+              />
+            </div>
+            <p className="progress-label">{progressLabel || "Loading file..."}</p>
+            <p className="progress-percent">{Math.round(progress)}%</p>
           </div>
         ) : (
           <>

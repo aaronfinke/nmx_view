@@ -71,6 +71,8 @@ function App() {
   const [imageComputing, setImageComputing] = useState(false);
   const [domainMin, setDomainMin] = useState<string>("");
   const [domainMax, setDomainMax] = useState<string>("");
+  const [loadProgress, setLoadProgress] = useState(0);
+  const [loadProgressLabel, setLoadProgressLabel] = useState("");
 
   const chartSize = useChartSize(panels.length);
 
@@ -78,18 +80,27 @@ function App() {
   const eventDataRef = useRef<Map<number, EventData>>(new Map());
   const browserFileRef = useRef<File | null>(null);
 
+  /** Yield to the event loop so React can render progress updates */
+  const yieldToUI = () =>
+    new Promise<void>((r) => requestAnimationFrame(() => setTimeout(r, 0)));
+
   /** Load ALL panels from the file */
   const loadAllPanels = useCallback(
-    (h5file: H5File, foundPanels: DetectorPanelInfo[]) => {
+    async (h5file: H5File, foundPanels: DetectorPanelInfo[]) => {
       eventDataRef.current = new Map();
       let globalTofMin = Infinity;
       let globalTofMax = -Infinity;
+      const totalSteps = foundPanels.length * 2 + 1; // read + image per panel + final
+      let step = 0;
 
       // Read event data for all panels
       for (let i = 0; i < foundPanels.length; i++) {
-        setStatus(
-          `Reading ${foundPanels[i].name} (${foundPanels[i].numEvents.toLocaleString()} events)... [${i + 1}/${foundPanels.length}]`
-        );
+        const label = `Reading ${foundPanels[i].name} (${foundPanels[i].numEvents.toLocaleString()} events)...`;
+        setLoadProgressLabel(label);
+        setLoadProgress(((++step) / totalSteps) * 100);
+        setStatus(label);
+        await yieldToUI();
+
         const ed = readEventData(h5file, foundPanels[i].path);
         eventDataRef.current.set(i, ed);
         const hist = computeTofHistogram(ed, numBins);
@@ -103,14 +114,21 @@ function App() {
       setTofAbsMax(globalTofMax);
 
       // Compute images for all panels
-      setStatus("Computing detector images...");
       const images: DetectorImageResult[] = [];
       for (let i = 0; i < foundPanels.length; i++) {
+        const label = `Computing image for ${foundPanels[i].name}...`;
+        setLoadProgressLabel(label);
+        setLoadProgress(((++step) / totalSteps) * 100);
+        setStatus(label);
+        await yieldToUI();
+
         const ed = eventDataRef.current.get(i)!;
         images.push(computeDetectorImage(ed, range));
       }
       setDetectorImages(images);
 
+      setLoadProgress(100);
+      setLoadProgressLabel("Done!");
       const totalEvents = images.reduce((s, img) => s + img.totalEvents, 0);
       setStatus(
         `Loaded ${foundPanels.length} panels — ${totalEvents.toLocaleString()} total events`
@@ -137,8 +155,10 @@ function App() {
           return;
         }
 
+        setLoadProgress(0);
+        setLoadProgressLabel("Starting...");
+        await loadAllPanels(h5file, foundPanels);
         setPanels(foundPanels);
-        loadAllPanels(h5file, foundPanels);
       } catch (err) {
         setStatus(`Error: ${(err as Error).message}`);
         console.error(err);
@@ -170,7 +190,9 @@ function App() {
       }
 
       setPanels(foundPanels);
-      loadAllPanels(h5file, foundPanels);
+      setLoadProgress(0);
+      setLoadProgressLabel("Reloading...");
+      await loadAllPanels(h5file, foundPanels);
     } catch (err) {
       setStatus(`Reload error: ${(err as Error).message}`);
       console.error(err);
@@ -233,11 +255,16 @@ function App() {
     return [lo, hi];
   }, [detectorImages, colorScale, domainMin, domainMax]);
 
-  // If no file loaded yet, show file loader
-  if (panels.length === 0) {
+  // Show file loader during initial load (no panels yet) or while loading without images
+  if (panels.length === 0 || (loading && detectorImages.every((d) => !d))) {
     return (
       <div className="app">
-        <FileLoader onFileLoaded={handleFileLoaded} loading={loading} />
+        <FileLoader
+          onFileLoaded={handleFileLoaded}
+          loading={loading}
+          progress={loadProgress}
+          progressLabel={loadProgressLabel}
+        />
         {status && <div className="status-bar">{status}</div>}
       </div>
     );
