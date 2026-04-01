@@ -116,6 +116,28 @@
   margin-top: 4px;
 }
 
+.colorbar-auto-btn {
+  display: block;
+  margin: 4px auto 0;
+  padding: 2px 8px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  background: #0099DC;
+  color: #ffffff;
+  border: none;
+  border-radius: 3px;
+  cursor: pointer;
+}
+.colorbar-auto-btn:hover {
+  background: #003366;
+}
+[data-filetype="NXlauetof"] .colorbar-auto-btn {
+  background: #821482;
+}
+[data-filetype="NXlauetof"] .colorbar-auto-btn:hover {
+  background: #4a0c4a;
+}
+
 .app-main {
   flex: 1;
   overflow: auto;

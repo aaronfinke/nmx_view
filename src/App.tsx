@@ -1,6 +1,6 @@
 import { useState, useCallback, useRef, useEffect, useMemo } from "react";
 import "@h5web/lib/dist/styles.css";
-import { ScaleType, getDomain } from "@h5web/lib";
+import { ScaleType } from "@h5web/lib";
 import { ViridisColorBar } from "./components/ViridisColorBar";
 import type { ColorScaleType, Domain } from "@h5web/lib";
 import { FileLoader } from "./components/FileLoader";
@@ -66,7 +66,7 @@ function App() {
   const [tofUnit, setTofUnit] = useState("µs");
   const [tofAbsMin, setTofAbsMin] = useState(0);
   const [tofAbsMax, setTofAbsMax] = useState(0);
-  const [colorScale, setColorScale] = useState<ColorScaleType>(ScaleType.Log);
+  const [colorScale, setColorScale] = useState<ColorScaleType>(ScaleType.Linear);
   const [numBins] = useState(500);
   const [imageComputing, setImageComputing] = useState(false);
   const [domainMin, setDomainMin] = useState<string>("");
@@ -229,31 +229,48 @@ function App() {
     [panels]
   );
 
-  // Compute shared domain across all panels
+  // Compute auto domain: min=0, max=min(vals.max(), mu + 2*sigma)
   const LOG_SCALES: readonly string[] = [ScaleType.Log, ScaleType.SymLog];
-  const sharedDomain: Domain = useMemo(() => {
-    let globalLo = Infinity;
-    let globalHi = -Infinity;
+  const autoDomain: Domain = useMemo(() => {
+    // Gather all non-zero pixel values across all panels
+    const allVals: number[] = [];
+    let valMax = 0;
     for (const img of detectorImages) {
       if (!img) continue;
-      const d = getDomain(Array.from(img.image));
-      if (d) {
-        if (d[0] < globalLo) globalLo = d[0];
-        if (d[1] > globalHi) globalHi = d[1];
+      for (let j = 0; j < img.image.length; j++) {
+        const v = img.image[j];
+        if (v > valMax) valMax = v;
+        if (v > 0) allVals.push(v);
       }
     }
-    if (!isFinite(globalLo)) return [0.1, 1];
-    let lo = globalLo;
-    let hi = globalHi;
-    if (LOG_SCALES.includes(colorScale)) lo = Math.max(lo, 0.1);
-    if (hi <= lo) hi = lo + 1;
+    if (allVals.length === 0) return [0.1, 1];
+    // Compute mean and std of non-zero values
+    const n = allVals.length;
+    let sum = 0;
+    for (let j = 0; j < n; j++) sum += allVals[j];
+    const mu = sum / n;
+    let sumSq = 0;
+    for (let j = 0; j < n; j++) sumSq += (allVals[j] - mu) ** 2;
+    const sigma = Math.sqrt(sumSq / n);
+    const hi = Math.min(valMax, mu + 2 * sigma);
+    return [0, Math.max(hi, 1)];
+  }, [detectorImages]);
+
+  const sharedDomain: Domain = useMemo(() => {
+    let lo = autoDomain[0];
+    let hi = autoDomain[1];
     // Apply user overrides
     if (domainMin !== "") lo = Number(domainMin);
     if (domainMax !== "") hi = Number(domainMax);
     if (LOG_SCALES.includes(colorScale)) lo = Math.max(lo, 0.1);
     if (hi <= lo) hi = lo + 1;
     return [lo, hi];
-  }, [detectorImages, colorScale, domainMin, domainMax]);
+  }, [autoDomain, colorScale, domainMin, domainMax]);
+
+  const handleAutoDomain = useCallback(() => {
+    setDomainMin("");
+    setDomainMax("");
+  }, []);
 
   // Show file loader during initial load (no panels yet) or while loading without images
   if (panels.length === 0 || (loading && detectorImages.every((d) => !d))) {
@@ -369,6 +386,13 @@ function App() {
                   title="Color bar min"
                   onChange={(e) => setDomainMin(e.target.value)}
                 />
+                <button
+                  className="colorbar-auto-btn"
+                  onClick={handleAutoDomain}
+                  title="Reset to optimal range (µ + 2σ)"
+                >
+                  Auto
+                </button>
               </div>
             </div>
             <TofRangeSlider
