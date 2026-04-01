@@ -73,6 +73,7 @@ function App() {
   const [domainMax, setDomainMax] = useState<string>("");
   const [loadProgress, setLoadProgress] = useState(0);
   const [loadProgressLabel, setLoadProgressLabel] = useState("");
+  const [fileName, setFileName] = useState("");
 
   const chartSize = useChartSize(panels.length);
 
@@ -143,6 +144,7 @@ function App() {
       setStatus("Opening HDF5 file...");
       try {
         browserFileRef.current = file;
+        setFileName(file.name);
         const h5file = await openFile(file);
         h5fileRef.current = h5file;
 
@@ -301,6 +303,7 @@ function App() {
               }
               browserFileRef.current = null;
               eventDataRef.current = new Map();
+              setFileName("");
               setPanels([]);
               setDetectorImages([]);
               setTofRange([0, 0]);
@@ -342,6 +345,7 @@ function App() {
               <option value={ScaleType.Sqrt}>Sqrt</option>
             </select>
           </div>
+          {fileName && <span className="file-name-badge">{fileName}</span>}
         </div>
       </header>
 
