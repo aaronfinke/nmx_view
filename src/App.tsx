@@ -523,6 +523,7 @@ function App() {
                       colorScale={colorScale}
                       size={chartSize}
                       domain={sharedDomain}
+                      singlePanel={viewMode !== "overview"}
                     />
                   );
                 })}
