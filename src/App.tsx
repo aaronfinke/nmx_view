@@ -510,9 +510,9 @@ function App() {
                 <div className="computing-overlay">Recomputing...</div>
               )}
               {(fileType === "NXlauetof" ? lauetofPanels : panels)
-                .filter((_, i) => viewMode === "overview" || i === viewMode)
-                .map((panel, _fi, _arr) => {
-                  const i = (fileType === "NXlauetof" ? lauetofPanels : panels).indexOf(panel);
+                .map((panel, i) => ({ panel, i }))
+                .filter(({ i }) => viewMode === "overview" || i === viewMode)
+                .map(({ panel, i }) => {
                   const img = detectorImages[i];
                   if (!img) return null;
                   return (
