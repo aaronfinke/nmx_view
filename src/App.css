@@ -249,8 +249,9 @@
   appearance: none;
   -webkit-appearance: none;
   background: transparent;
-  pointer-events: none;
+  pointer-events: auto;
   z-index: 2;
+  cursor: pointer;
 }
 
 .dual-range-input::-webkit-slider-thumb {
