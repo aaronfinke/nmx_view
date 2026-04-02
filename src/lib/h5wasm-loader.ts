@@ -143,44 +143,109 @@ export function findDetectorPanels(h5file: H5File): DetectorPanelInfo[] {
 }
 
 export interface EventData {
-  eventId: Int32Array | BigInt64Array;
-  eventTimeOffset: Int32Array | BigInt64Array;
-  detectorNumber: Int32Array;
+  /** Pre-converted event pixel IDs (Float64) */
+  eventIdF64: Float64Array;
+  /** Pre-converted TOF values (Float64), sorted ascending */
+  tofSorted: Float64Array;
+  /** Indices into original arrays, sorted by TOF */
+  sortedIndices: Uint32Array;
   detectorShape: [number, number];
   panelPixelIdMin: number;
+  /** Cached pixel-to-flat-index mapping */
+  pixelToFlat: Int32Array;
+  /** True if pixelToFlat[i] === i for all i (sequential detector_number) */
+  isIdentity: boolean;
+  /** Pre-computed TOF bounds */
+  tofMin: number;
+  tofMax: number;
 }
 
-export function readEventData(h5file: H5File, panelPath: string): EventData {
-  const eventIdDs = h5file.get(
-    `${panelPath}/data/event_id`
-  ) as H5Dataset;
-  const etoDs = h5file.get(
-    `${panelPath}/data/event_time_offset`
-  ) as H5Dataset;
-  const detNumDs = h5file.get(
-    `${panelPath}/detector_number`
-  ) as H5Dataset;
+/**
+ * Convert BigInt64Array or Int32Array to Float64Array.
+ */
+function toFloat64(arr: Int32Array | BigInt64Array): Float64Array {
+  const out = new Float64Array(arr.length);
+  if (arr instanceof BigInt64Array) {
+    for (let i = 0; i < arr.length; i++) out[i] = Number(arr[i]);
+  } else {
+    for (let i = 0; i < arr.length; i++) out[i] = arr[i];
+  }
+  return out;
+}
 
-  const eventId = eventIdDs.value as Int32Array | BigInt64Array;
-  const eventTimeOffset = etoDs.value as Int32Array | BigInt64Array;
-  const detectorNumber = detNumDs.value as Int32Array;
-  const detectorShape: [number, number] = [
-    detNumDs.shape![0],
-    detNumDs.shape![1],
-  ];
-
-  // Find panelPixelIdMin from detector_number
-  let minId = Number.MAX_SAFE_INTEGER;
+/**
+ * Build reverse lookup: pixelId - panelMin → flat detector index.
+ */
+function buildPixelMap(
+  detectorNumber: Int32Array,
+  panelMin: number,
+  totalPixels: number
+): { pixelToFlat: Int32Array; isIdentity: boolean } {
+  const pixelToFlat = new Int32Array(totalPixels);
+  pixelToFlat.fill(-1);
   for (let i = 0; i < detectorNumber.length; i++) {
-    if (detectorNumber[i] < minId) minId = detectorNumber[i];
+    const pid = detectorNumber[i] - panelMin;
+    if (pid >= 0 && pid < totalPixels) pixelToFlat[pid] = i;
+  }
+  let isIdentity = true;
+  for (let i = 0; i < totalPixels; i++) {
+    if (pixelToFlat[i] !== i) { isIdentity = false; break; }
+  }
+  return { pixelToFlat, isIdentity };
+}
+
+/**
+ * Read event data and pre-process: convert BigInt→Float64, sort by TOF,
+ * cache pixel mapping. All heavy work is done here at load time.
+ */
+export function readEventData(h5file: H5File, panelPath: string): EventData {
+  const eventIdDs = h5file.get(`${panelPath}/data/event_id`) as H5Dataset;
+  const etoDs = h5file.get(`${panelPath}/data/event_time_offset`) as H5Dataset;
+  const detNumDs = h5file.get(`${panelPath}/detector_number`) as H5Dataset;
+
+  const rawEventId = eventIdDs.value as Int32Array | BigInt64Array;
+  const rawTof = etoDs.value as Int32Array | BigInt64Array;
+  const detectorNumber = detNumDs.value as Int32Array;
+  const detectorShape: [number, number] = [detNumDs.shape![0], detNumDs.shape![1]];
+
+  // 1. Convert BigInt → Float64 (done once)
+  const eventIdF64 = toFloat64(rawEventId);
+  const tofF64 = toFloat64(rawTof);
+
+  // 2. Find panelPixelIdMin
+  let panelPixelIdMin = Number.MAX_SAFE_INTEGER;
+  for (let i = 0; i < detectorNumber.length; i++) {
+    if (detectorNumber[i] < panelPixelIdMin) panelPixelIdMin = detectorNumber[i];
   }
 
+  // 3. Build + cache pixel map
+  const totalPixels = detectorShape[0] * detectorShape[1];
+  const { pixelToFlat, isIdentity } = buildPixelMap(detectorNumber, panelPixelIdMin, totalPixels);
+
+  // 4. Pre-sort events by TOF: create index array and sort
+  const n = tofF64.length;
+  const sortedIndices = new Uint32Array(n);
+  for (let i = 0; i < n; i++) sortedIndices[i] = i;
+  sortedIndices.sort((a, b) => tofF64[a] - tofF64[b]);
+
+  // Build sorted TOF array for binary search
+  const tofSorted = new Float64Array(n);
+  for (let i = 0; i < n; i++) tofSorted[i] = tofF64[sortedIndices[i]];
+
+  // 5. Pre-compute TOF bounds
+  const tofMin = n > 0 ? tofSorted[0] : 0;
+  const tofMax = n > 0 ? tofSorted[n - 1] : 0;
+
   return {
-    eventId,
-    eventTimeOffset,
-    detectorNumber,
+    eventIdF64,
+    tofSorted,
+    sortedIndices,
     detectorShape,
-    panelPixelIdMin: minId,
+    panelPixelIdMin,
+    pixelToFlat,
+    isIdentity,
+    tofMin,
+    tofMax,
   };
 }
 
