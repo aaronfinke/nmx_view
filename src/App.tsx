@@ -5,6 +5,8 @@ import { ViridisColorBar } from "./components/ViridisColorBar";
 import type { ColorScaleType, Domain } from "@h5web/lib";
 import { FileLoader } from "./components/FileLoader";
 import { DetectorImage } from "./components/DetectorImage";
+import type { InteractionMode, SelectionRegion } from "./components/DetectorImage";
+import { SurfaceProfile3D } from "./components/SurfaceProfile3D";
 import { TofRangeSlider } from "./components/TofRangeSlider";
 import {
   openFile,
@@ -30,12 +32,15 @@ import "./App.css";
 const CHROME_HEIGHT = 160;
 /** Width reserved for the shared color bar + domain inputs */
 const COLORBAR_WIDTH = 80;
+/** Width reserved for the 3D profile panel when visible */
+const PROFILE_PANEL_WIDTH = 400;
 
-function useChartSize(panelCount: number) {
+function useChartSize(panelCount: number, hasProfile: boolean) {
   const compute = () => {
     const gap = 8; // gap between panels
     const totalGap = (Math.max(panelCount, 1) - 1) * gap;
-    const availW = window.innerWidth - 40 - totalGap - COLORBAR_WIDTH;
+    const profileW = hasProfile ? PROFILE_PANEL_WIDTH + gap : 0;
+    const availW = window.innerWidth - 40 - totalGap - COLORBAR_WIDTH - profileW;
     const availH = window.innerHeight - CHROME_HEIGHT;
     const perPanel = availW / Math.max(panelCount, 1);
     const s = Math.min(perPanel, availH);
@@ -49,13 +54,13 @@ function useChartSize(panelCount: number) {
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [panelCount]);
+  }, [panelCount, hasProfile]);
 
-  // Recompute when panelCount changes
+  // Recompute when panelCount or hasProfile changes
   useEffect(() => {
     setSize(compute());
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [panelCount]);
+  }, [panelCount, hasProfile]);
 
   return size;
 }
@@ -86,6 +91,8 @@ function App() {
   const [fileName, setFileName] = useState("");
   const [viewMode, setViewMode] = useState<"overview" | number>("overview");
   const [showHelp, setShowHelp] = useState(false);
+  const [interactionMode, setInteractionMode] = useState<InteractionMode>("zoom");
+  const [profileData, setProfileData] = useState<{ data: Float64Array; shape: [number, number] } | null>(null);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -102,7 +109,8 @@ function App() {
 
   const activePanelCount = fileType === "NXlauetof" ? lauetofPanels.length : panels.length;
   const displayPanelCount = viewMode === "overview" ? activePanelCount : 1;
-  const chartSize = useChartSize(displayPanelCount);
+  const hasProfileVisible = viewMode !== "overview" && interactionMode === "profile" && profileData !== null;
+  const chartSize = useChartSize(displayPanelCount, hasProfileVisible);
 
   const h5fileRef = useRef<H5File | null>(null);
   const eventDataRef = useRef<Map<number, EventData>>(new Map());
@@ -418,6 +426,35 @@ function App() {
     setDomainMax("");
   }, []);
 
+  /** Handle profile selection from DetectorImage */
+  const handleProfileSelection = useCallback(
+    (region: SelectionRegion) => {
+      // Get the currently displayed single-panel image
+      const panelIdx = typeof viewMode === "number" ? viewMode : 0;
+      const img = detectorImages[panelIdx];
+      if (!img) return;
+
+      const { rows, cols } = region;
+      const [rowStart, rowEnd] = rows;
+      const [colStart, colEnd] = cols;
+      const subRows = rowEnd - rowStart;
+      const subCols = colEnd - colStart;
+      if (subRows <= 0 || subCols <= 0) return;
+
+      // Extract sub-region from the flat image array (row-major, shape = [rows, cols])
+      const subData = new Float64Array(subRows * subCols);
+      const fullCols = img.shape[1];
+      for (let r = 0; r < subRows; r++) {
+        for (let c = 0; c < subCols; c++) {
+          subData[r * subCols + c] = img.image[(rowStart + r) * fullCols + (colStart + c)];
+        }
+      }
+
+      setProfileData({ data: subData, shape: [subRows, subCols] });
+    },
+    [viewMode, detectorImages]
+  );
+
   // Show file loader during initial load (no panels yet) or while loading without images
   const hasPanels = fileType === "NXlauetof" ? lauetofPanels.length > 0 : panels.length > 0;
   if (!hasPanels || (loading && detectorImages.every((d) => !d))) {
@@ -459,6 +496,8 @@ function App() {
               setTofAbsMax(0);
               setDomainMin("");
               setDomainMax("");
+              setProfileData(null);
+              setInteractionMode("zoom");
               setStatus("");
             }}
             title="Load a different file"
@@ -480,6 +519,8 @@ function App() {
               onChange={(e) => {
                 const v = e.target.value;
                 setViewMode(v === "overview" ? "overview" : Number(v));
+                setProfileData(null);
+                setInteractionMode("zoom");
               }}
             >
               <option value="overview">Overview</option>
@@ -490,6 +531,22 @@ function App() {
               ))}
             </select>
           </div>
+          {viewMode !== "overview" && (
+            <div className="control-group">
+              <label>Mode:</label>
+              <select
+                value={interactionMode}
+                onChange={(e) => {
+                  const mode = e.target.value as InteractionMode;
+                  setInteractionMode(mode);
+                  if (mode === "zoom") setProfileData(null);
+                }}
+              >
+                <option value="zoom">Zoom</option>
+                <option value="profile">Profile</option>
+              </select>
+            </div>
+          )}
           <div className="control-group">
             <label>TOF unit:</label>
             <select value={tofUnit} onChange={(e) => setTofUnit(e.target.value)}>
@@ -545,6 +602,8 @@ function App() {
                       size={chartSize}
                       domain={sharedDomain}
                       singlePanel={viewMode !== "overview"}
+                      interactionMode={interactionMode}
+                      onProfileSelection={handleProfileSelection}
                     />
                   );
                 })}
@@ -576,6 +635,14 @@ function App() {
                   Auto
                 </button>
               </div>
+              {viewMode !== "overview" && interactionMode === "profile" && profileData && (
+                <SurfaceProfile3D
+                  data={profileData.data}
+                  shape={profileData.shape}
+                  size={Math.min(PROFILE_PANEL_WIDTH, chartSize)}
+                  colorScale={colorScale}
+                />
+              )}
             </div>
             <TofRangeSlider
               tofMin={tofAbsMin}
