@@ -73,7 +73,7 @@ function App() {
     (DetectorImageResult | null)[]
   >([]);
   const [tofRange, setTofRange] = useState<[number, number]>([0, 0]);
-  const [tofUnit, setTofUnit] = useState("µs");
+  const tofUnit = "µs";
   const [tofAbsMin, setTofAbsMin] = useState(0);
   const [tofAbsMax, setTofAbsMax] = useState(0);
   const [colorScale, setColorScale] = useState<ColorScaleType>(ScaleType.Linear);
@@ -318,23 +318,26 @@ function App() {
       setTimeout(() => {
         if (fileType === "NXlauetof" && h5fileRef.current) {
           // NXlauetof: find closest bin center and read that single slice
-          const images: (DetectorImageResult | null)[] = [];
           const center = (range[0] + range[1]) / 2;
-          for (let i = 0; i < lauetofPanels.length; i++) {
-            const p = lauetofPanels[i];
-            // Find closest bin index to center of range
-            let bestIdx = 0;
-            let bestDist = Math.abs(p.tofBins[0] - center);
-            for (let j = 1; j < p.tofBins.length; j++) {
-              const dist = Math.abs(p.tofBins[j] - center);
-              if (dist < bestDist) {
-                bestDist = dist;
-                bestIdx = j;
+          setDetectorImages((prev) => {
+            const images = [...prev];
+            for (let i = 0; i < lauetofPanels.length; i++) {
+              // In single-panel mode, skip panels not being viewed
+              if (viewMode !== "overview" && i !== viewMode) continue;
+              const p = lauetofPanels[i];
+              let bestIdx = 0;
+              let bestDist = Math.abs(p.tofBins[0] - center);
+              for (let j = 1; j < p.tofBins.length; j++) {
+                const dist = Math.abs(p.tofBins[j] - center);
+                if (dist < bestDist) {
+                  bestDist = dist;
+                  bestIdx = j;
+                }
               }
+              images[i] = readLauetofSingleSlice(h5fileRef.current!, p.path, bestIdx);
             }
-            images.push(readLauetofSingleSlice(h5fileRef.current!, p.path, bestIdx));
-          }
-          setDetectorImages(images);
+            return images;
+          });
           setImageComputing(false);
           const sliceIdx = (() => {
             const p = lauetofPanels[0];
@@ -347,22 +350,23 @@ function App() {
             }
             return best;
           })();
-          const totalCounts = images.reduce((s, img) => s + (img?.totalEvents ?? 0), 0);
-          setStatus(`${lauetofPanels.length} panels — slice ${sliceIdx + 1}/${lauetofPanels[0]?.shape[2] ?? 0} — ${totalCounts.toLocaleString()} counts`);
+          setStatus(`${lauetofPanels.length} panels — slice ${sliceIdx + 1}/${lauetofPanels[0]?.shape[2] ?? 0}`);
         } else {
-          // NXeventdata: bin events on the fly
-          const images: (DetectorImageResult | null)[] = [];
-          for (let i = 0; i < panels.length; i++) {
-            const ed = eventDataRef.current.get(i);
-            if (ed) {
-              images.push(computeDetectorImage(ed, range));
-            } else {
-              images.push(null);
+          // NXeventdata: bin events only for visible panel(s)
+          setDetectorImages((prev) => {
+            const images = [...prev];
+            for (let i = 0; i < panels.length; i++) {
+              // In single-panel mode, skip panels not being viewed
+              if (viewMode !== "overview" && i !== viewMode) continue;
+              const ed = eventDataRef.current.get(i);
+              if (ed) {
+                images[i] = computeDetectorImage(ed, range);
+              }
             }
-          }
-          setDetectorImages(images);
+            return images;
+          });
           setImageComputing(false);
-          const totalEvents = images.reduce(
+          const totalEvents = detectorImages.reduce(
             (s, img) => s + (img?.totalEvents ?? 0),
             0
           );
@@ -372,7 +376,7 @@ function App() {
         }
       }, 0);
     },
-    [fileType, panels, lauetofPanels]
+    [fileType, panels, lauetofPanels, viewMode]
   );
 
   // Compute auto domain: min=0, max=min(vals.max(), mu + 2*sigma)
@@ -490,14 +494,7 @@ function App() {
               ))}
             </select>
           </div>
-          <div className="control-group">
-            <label>TOF unit:</label>
-            <select value={tofUnit} onChange={(e) => setTofUnit(e.target.value)}>
-              <option value="ns">ns</option>
-              <option value="µs">µs</option>
-              <option value="ms">ms</option>
-            </select>
-          </div>
+
           <div className="control-group">
             <label>Color scale:</label>
             <select
