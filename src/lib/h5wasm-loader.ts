@@ -72,8 +72,8 @@ function readStringValue(ds: H5Dataset): string {
  * Checks: (1) direct child datasets, (2) 'data' subgroup, (3) any subgroup with NX_class=NXevent_data.
  */
 function findEventDataGroup(
-  h5file: H5File,
-  panelPath: string,
+  _h5file: H5File,
+  _panelPath: string,
   panelGroup: H5Group
 ): H5Group | null {
   // Check if event_id exists directly in the panel group
@@ -418,7 +418,7 @@ export function findLauetofPanels(h5file: H5File): LauetofPanelInfo[] {
     panels.push({
       path: panelPath,
       name: key,
-      shape: [dataDs.shape[0], dataDs.shape[1], dataDs.shape[2]],
+      shape: [dataDs.shape![0], dataDs.shape![1], dataDs.shape![2]],
       tofBins,
     });
   }
