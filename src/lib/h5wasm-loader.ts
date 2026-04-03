@@ -143,44 +143,112 @@ export function findDetectorPanels(h5file: H5File): DetectorPanelInfo[] {
 }
 
 export interface EventData {
-  eventId: Int32Array | BigInt64Array;
-  eventTimeOffset: Int32Array | BigInt64Array;
-  detectorNumber: Int32Array;
+  /** Pre-converted event pixel IDs (Float64) */
+  eventIdF64: Float64Array;
+  /** Pre-converted TOF values (Float64) */
+  tofF64: Float64Array;
   detectorShape: [number, number];
   panelPixelIdMin: number;
+  /** Cached pixel-to-flat-index mapping */
+  pixelToFlat: Int32Array;
+  /** True if pixelToFlat[i] === i for all i (sequential detector_number) */
+  isIdentity: boolean;
+  /** Pre-computed TOF bounds */
+  tofMin: number;
+  tofMax: number;
 }
 
-export function readEventData(h5file: H5File, panelPath: string): EventData {
-  const eventIdDs = h5file.get(
-    `${panelPath}/data/event_id`
-  ) as H5Dataset;
-  const etoDs = h5file.get(
-    `${panelPath}/data/event_time_offset`
-  ) as H5Dataset;
-  const detNumDs = h5file.get(
-    `${panelPath}/detector_number`
-  ) as H5Dataset;
+/**
+ * Convert BigInt64Array or Int32Array to Float64Array.
+ */
+function toFloat64(arr: Int32Array | BigInt64Array): Float64Array {
+  const out = new Float64Array(arr.length);
+  if (arr instanceof BigInt64Array) {
+    for (let i = 0; i < arr.length; i++) out[i] = Number(arr[i]);
+  } else {
+    for (let i = 0; i < arr.length; i++) out[i] = arr[i];
+  }
+  return out;
+}
 
-  const eventId = eventIdDs.value as Int32Array | BigInt64Array;
-  const eventTimeOffset = etoDs.value as Int32Array | BigInt64Array;
-  const detectorNumber = detNumDs.value as Int32Array;
-  const detectorShape: [number, number] = [
-    detNumDs.shape![0],
-    detNumDs.shape![1],
-  ];
-
-  // Find panelPixelIdMin from detector_number
-  let minId = Number.MAX_SAFE_INTEGER;
+/**
+ * Build reverse lookup: pixelId - panelMin → flat detector index.
+ */
+function buildPixelMap(
+  detectorNumber: Int32Array,
+  panelMin: number,
+  totalPixels: number
+): { pixelToFlat: Int32Array; isIdentity: boolean } {
+  const pixelToFlat = new Int32Array(totalPixels);
+  pixelToFlat.fill(-1);
   for (let i = 0; i < detectorNumber.length; i++) {
-    if (detectorNumber[i] < minId) minId = detectorNumber[i];
+    const pid = detectorNumber[i] - panelMin;
+    if (pid >= 0 && pid < totalPixels) pixelToFlat[pid] = i;
+  }
+  let isIdentity = true;
+  for (let i = 0; i < totalPixels; i++) {
+    if (pixelToFlat[i] !== i) { isIdentity = false; break; }
+  }
+  return { pixelToFlat, isIdentity };
+}
+
+/**
+ * Read event data and pre-process: convert BigInt→Float64, sort by TOF,
+ * cache pixel mapping. All heavy work is done here at load time.
+ */
+export function readEventData(h5file: H5File, panelPath: string): EventData {
+  console.time(`[${panelPath}] total readEventData`);
+
+  const eventIdDs = h5file.get(`${panelPath}/data/event_id`) as H5Dataset;
+  const etoDs = h5file.get(`${panelPath}/data/event_time_offset`) as H5Dataset;
+  const detNumDs = h5file.get(`${panelPath}/detector_number`) as H5Dataset;
+
+  const rawEventId = eventIdDs.value as Int32Array | BigInt64Array;
+  const rawTof = etoDs.value as Int32Array | BigInt64Array;
+  const detectorNumber = detNumDs.value as Int32Array;
+  const detectorShape: [number, number] = [detNumDs.shape![0], detNumDs.shape![1]];
+
+  // 1. Convert BigInt → Float64 (done once)
+  console.time(`[${panelPath}] BigInt→Float64`);
+  const eventIdF64 = toFloat64(rawEventId);
+  const tofF64 = toFloat64(rawTof);
+  console.timeEnd(`[${panelPath}] BigInt→Float64`);
+
+  // 2. Find panelPixelIdMin
+  let panelPixelIdMin = Number.MAX_SAFE_INTEGER;
+  for (let i = 0; i < detectorNumber.length; i++) {
+    if (detectorNumber[i] < panelPixelIdMin) panelPixelIdMin = detectorNumber[i];
   }
 
+  // 3. Build + cache pixel map
+  const totalPixels = detectorShape[0] * detectorShape[1];
+  console.time(`[${panelPath}] buildPixelMap`);
+  const { pixelToFlat, isIdentity } = buildPixelMap(detectorNumber, panelPixelIdMin, totalPixels);
+  console.timeEnd(`[${panelPath}] buildPixelMap`);
+
+  // 4. Find TOF bounds with a single O(N) pass
+  let tofMin = Infinity;
+  let tofMax = -Infinity;
+  console.time(`[${panelPath}] TOF bounds`);
+
+  for (let i = 0; i < tofF64.length; i++) {
+    const v = tofF64[i];
+    if (v < tofMin) tofMin = v;
+    if (v > tofMax) tofMax = v;
+  }
+  console.timeEnd(`[${panelPath}] TOF bounds`);
+
+  if (!isFinite(tofMin)) { tofMin = 0; tofMax = 0; }
+  console.timeEnd(`[${panelPath}] total readEventData`);
   return {
-    eventId,
-    eventTimeOffset,
-    detectorNumber,
+    eventIdF64,
+    tofF64,
     detectorShape,
-    panelPixelIdMin: minId,
+    panelPixelIdMin,
+    pixelToFlat,
+    isIdentity,
+    tofMin,
+    tofMax,
   };
 }
 
