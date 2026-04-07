@@ -68,6 +68,47 @@ function readStringValue(ds: H5Dataset): string {
 }
 
 /**
+ * Read the "units" attribute from a dataset and return a multiplier to convert to nanoseconds.
+ * Recognized units: s, ms, us/µs, ns. Defaults to 1.0 (assumes ns) if not found.
+ */
+function getTofToNsFactor(ds: H5Dataset): number {
+  const attrs = ds.attrs;
+  const unitAttr = attrs?.["units"] ?? attrs?.["unit"];
+  if (!unitAttr) return 1.0; // assume ns
+  let unit: string;
+  const val = unitAttr.value;
+  if (typeof val === "string") {
+    unit = val.trim().toLowerCase();
+  } else if (val instanceof Uint8Array) {
+    unit = new TextDecoder().decode(val).trim().toLowerCase();
+  } else {
+    unit = String(val ?? "").trim().toLowerCase();
+  }
+  switch (unit) {
+    case "s":
+    case "second":
+    case "seconds":
+      return 1e9;
+    case "ms":
+    case "millisecond":
+    case "milliseconds":
+      return 1e6;
+    case "us":
+    case "µs":
+    case "microsecond":
+    case "microseconds":
+      return 1e3;
+    case "ns":
+    case "nanosecond":
+    case "nanoseconds":
+      return 1.0;
+    default:
+      console.warn(`Unknown TOF unit "${unit}", assuming nanoseconds`);
+      return 1.0;
+  }
+}
+
+/**
  * Find an NXevent_data group within a panel group.
  * Checks: (1) direct child datasets, (2) 'data' subgroup, (3) any subgroup with NX_class=NXevent_data.
  */
@@ -288,10 +329,14 @@ export function readEventData(h5file: H5File, panelPath: string): EventData {
     for (let i = 0; i < totalPx; i++) detectorNumber[i] = i;
   }
 
-  // 1. Convert BigInt → Float64 (done once)
+  // 1. Convert BigInt → Float64 (done once) + unit → ns
   console.time(`[${panelPath}] BigInt→Float64`);
   const eventIdF64 = toFloat64(rawEventId);
   const tofF64 = toFloat64(rawTof);
+  const tofFactor = getTofToNsFactor(etoDs);
+  if (tofFactor !== 1.0) {
+    for (let i = 0; i < tofF64.length; i++) tofF64[i] *= tofFactor;
+  }
   console.timeEnd(`[${panelPath}] BigInt→Float64`);
 
   // 2. Find panelPixelIdMin
@@ -413,6 +458,11 @@ export function findLauetofPanels(h5file: H5File): LauetofPanelInfo[] {
       tofBins = new Float64Array(tofRaw as ArrayLike<number>);
     } else {
       continue;
+    }
+
+    const tofFactor = getTofToNsFactor(tofDs);
+    if (tofFactor !== 1.0) {
+      for (let i = 0; i < tofBins.length; i++) tofBins[i] *= tofFactor;
     }
 
     panels.push({
