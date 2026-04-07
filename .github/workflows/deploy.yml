@@ -1,4 +1,4 @@
-name: Deploy to GitHub Pages
+name: Deploy to GitHub Pages and trigger pipeline
 
 on:
   push:
@@ -40,3 +40,5 @@ jobs:
       url: ${{ github.outputs.page_url }}
     steps:
       - uses: actions/deploy-pages@v4
+
+  
