@@ -265,9 +265,13 @@
   appearance: none;
   -webkit-appearance: none;
   background: transparent;
-  pointer-events: auto;
+  pointer-events: none;
   z-index: 2;
   cursor: pointer;
+}
+
+.dual-range-input.center-slider {
+  pointer-events: auto;
 }
 
 .dual-range-input::-webkit-slider-thumb {
