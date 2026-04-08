@@ -1,4 +1,5 @@
 import React, { useState, useCallback, useRef, useEffect } from "react";
+import { tofToWavelength } from "../lib/dspacing";
 
 interface TofRangeSliderProps {
   tofMin: number; // absolute min (ns)
@@ -12,6 +13,8 @@ interface TofRangeSliderProps {
   fixedWindowWidthNs?: number;
   /** TOF bin centers in ns — slider snaps to these values */
   snapValuesNs?: number[];
+  /** Total flight path in meters (L1 + L2) — enables wavelength display */
+  totalFlightPathM?: number;
 }
 
 export const TofRangeSlider: React.FC<TofRangeSliderProps> = ({
@@ -23,6 +26,7 @@ export const TofRangeSlider: React.FC<TofRangeSliderProps> = ({
   forceWindowMode = false,
   fixedWindowWidthNs,
   snapValuesNs,
+  totalFlightPathM,
 }) => {
   const displayScale = unit === "µs" ? 1e-3 : unit === "ms" ? 1e-6 : 1;
 
@@ -221,10 +225,15 @@ export const TofRangeSlider: React.FC<TofRangeSliderProps> = ({
   const isWindowMode = windowEnabled && windowWidth > 0;
   const centerDisplay = ((localRange[0] + localRange[1]) / 2) * displayScale;
 
+  // Wavelength for current range center (Å)
+  const lambdaCenter = totalFlightPathM && totalFlightPathM > 0
+    ? tofToWavelength((localRange[0] + localRange[1]) / 2, totalFlightPathM)
+    : null;
+
   return (
     <div className="tof-slider-panel">
       <div className="tof-slider-row">
-        <span className="tof-label">TOF ({unit}):</span>
+        <span className="tof-label">TOF ({unit}){lambdaCenter !== null ? ` · λ ${lambdaCenter.toFixed(2)} Å` : ''}:</span>
         <input
           type="number"
           className="tof-number"

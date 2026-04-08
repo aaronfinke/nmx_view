@@ -598,6 +598,16 @@ function App() {
                   ? Array.from(lauetofPanels[0].tofBins)
                   : undefined
               }
+              totalFlightPathM={
+                fileType === "NXlauetof" && lauetofPanels.length > 0 && lauetofPanels[0].geometry
+                  ? lauetofPanels[0].geometry.sourceDistance +
+                    Math.sqrt(
+                      lauetofPanels[0].geometry.origin[0] ** 2 +
+                      lauetofPanels[0].geometry.origin[1] ** 2 +
+                      lauetofPanels[0].geometry.origin[2] ** 2
+                    )
+                  : undefined
+              }
             />
           </>
         )}

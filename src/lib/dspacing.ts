@@ -94,3 +94,13 @@ export function computePixelDSpacing(
     twoTheta: twoTheta * (180 / Math.PI),
   };
 }
+
+/**
+ * Compute neutron wavelength from TOF and total flight path.
+ * λ = h·t / (m_n · L_total), returned in Ångströms.
+ * totalDistanceM = L1 + average L2 (meters), tofNs in nanoseconds.
+ */
+export function tofToWavelength(tofNs: number, totalDistanceM: number): number {
+  const tofSec = tofNs * 1e-9;
+  return (PLANCK * tofSec / (NEUTRON_MASS * totalDistanceM)) * 1e10;
+}
