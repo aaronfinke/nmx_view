@@ -533,6 +533,7 @@ function App() {
                 .map(({ panel, i }) => {
                   const img = detectorImages[i];
                   if (!img) return null;
+                  const lauetofPanel = fileType === "NXlauetof" ? lauetofPanels[i] : null;
                   return (
                     <DetectorImage
                       key={panel.path}
@@ -542,6 +543,12 @@ function App() {
                       size={chartSize}
                       domain={sharedDomain}
                       singlePanel={viewMode !== "overview"}
+                      panelGeometry={lauetofPanel?.geometry}
+                      tofCenterNs={
+                        lauetofPanel
+                          ? (tofRange[0] + tofRange[1]) / 2
+                          : undefined
+                      }
                     />
                   );
                 })}

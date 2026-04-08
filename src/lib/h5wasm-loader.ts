@@ -6,6 +6,7 @@ import h5wasm, {
 } from "h5wasm";
 
 import type { DetectorImageResult } from "./event-data";
+import type { PanelGeometry } from "./dspacing";
 
 // Plugin .so filenames to load for filter support (bitshuffle, lz4, etc.)
 const PLUGIN_NAMES = [
@@ -384,6 +385,7 @@ export interface LauetofPanelInfo {
   name: string;
   shape: [number, number, number]; // [rows, cols, numTofBins]
   tofBins: Float64Array; // TOF bin centers (ns)
+  geometry: PanelGeometry | null; // detector geometry for d-spacing
 }
 
 /**
@@ -433,6 +435,82 @@ function findLauetofDatasets(
   return { dataDs, tofDs };
 }
 
+/** Read a scalar float from a dataset, handling typed arrays and BigInt. */
+function readScalarFloat(ds: H5Dataset): number {
+  const v = ds.value;
+  if (typeof v === "number") return v;
+  if (v instanceof Float64Array || v instanceof Float32Array) return v[0];
+  if (v instanceof BigInt64Array || v instanceof BigUint64Array) return Number(v[0]);
+  if (ArrayBuffer.isView(v)) return (v as unknown as ArrayLike<number>)[0];
+  return Number(v);
+}
+
+/** Read a length-3 float vector from a dataset. */
+function readVec3(ds: H5Dataset): [number, number, number] {
+  const v = ds.value;
+  if (v instanceof Float64Array || v instanceof Float32Array) {
+    return [v[0], v[1], v[2]];
+  }
+  if (Array.isArray(v)) return [Number(v[0]), Number(v[1]), Number(v[2])];
+  if (ArrayBuffer.isView(v)) {
+    const a = v as unknown as ArrayLike<number>;
+    return [a[0], a[1], a[2]];
+  }
+  return [0, 0, 0];
+}
+
+/** Read a distance value from a dataset, converting to meters. */
+function readDistanceMeters(ds: H5Dataset): number {
+  let val = readScalarFloat(ds);
+  const unitAttr = ds.attrs?.["units"] ?? ds.attrs?.["unit"];
+  if (unitAttr) {
+    const u = typeof unitAttr.value === "string"
+      ? unitAttr.value.trim().toLowerCase()
+      : String(unitAttr.value ?? "").trim().toLowerCase();
+    if (u === "mm") val *= 1e-3;
+    else if (u === "cm") val *= 1e-2;
+    // "m" is default, no conversion needed
+  }
+  return val;
+}
+
+/**
+ * Read panel geometry for d-spacing calculation.
+ * Requires: origin (3-vec), fast_axis (3-vec), slow_axis (3-vec),
+ * x_pixel_size, y_pixel_size (scalar), and source distance from
+ * /entry/instrument/source/distance.
+ */
+function readPanelGeometry(
+  h5file: H5File,
+  panelPath: string,
+  nRows: number,
+  nCols: number
+): PanelGeometry | null {
+  try {
+    const originDs = h5file.get(`${panelPath}/origin`) as H5Dataset | null;
+    const fastDs = h5file.get(`${panelPath}/fast_axis`) as H5Dataset | null;
+    const slowDs = h5file.get(`${panelPath}/slow_axis`) as H5Dataset | null;
+    const xpDs = h5file.get(`${panelPath}/x_pixel_size`) as H5Dataset | null;
+    const ypDs = h5file.get(`${panelPath}/y_pixel_size`) as H5Dataset | null;
+    const srcDs = h5file.get("entry/instrument/source/distance") as H5Dataset | null;
+
+    if (!originDs || !fastDs || !slowDs || !xpDs || !ypDs || !srcDs) return null;
+
+    return {
+      origin: readVec3(originDs),
+      fastAxis: readVec3(fastDs),
+      slowAxis: readVec3(slowDs),
+      xPixelSize: readDistanceMeters(xpDs),
+      yPixelSize: readDistanceMeters(ypDs),
+      sourceDistance: readDistanceMeters(srcDs),
+      nRows,
+      nCols,
+    };
+  } catch {
+    return null;
+  }
+}
+
 export function findLauetofPanels(h5file: H5File): LauetofPanelInfo[] {
   const panels: LauetofPanelInfo[] = [];
   const instrument = h5file.get("entry/instrument");
@@ -465,11 +543,14 @@ export function findLauetofPanels(h5file: H5File): LauetofPanelInfo[] {
       for (let i = 0; i < tofBins.length; i++) tofBins[i] *= tofFactor;
     }
 
+    const panelShape: [number, number, number] = [dataDs.shape![0], dataDs.shape![1], dataDs.shape![2]];
+
     panels.push({
       path: panelPath,
       name: key,
-      shape: [dataDs.shape![0], dataDs.shape![1], dataDs.shape![2]],
+      shape: panelShape,
       tofBins,
+      geometry: readPanelGeometry(h5file, panelPath, panelShape[0], panelShape[1]),
     });
   }
 
