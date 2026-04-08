@@ -206,6 +206,12 @@
   color: #003366;
 }
 
+.detector-tooltip {
+  font-size: 0.8rem;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+
 /* TOF Range Slider */
 .tof-slider-panel {
   padding: 0.5rem 0.25rem;

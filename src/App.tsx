@@ -533,6 +533,7 @@ function App() {
                 .map(({ panel, i }) => {
                   const img = detectorImages[i];
                   if (!img) return null;
+                  const lauetofPanel = fileType === "NXlauetof" ? lauetofPanels[i] : null;
                   return (
                     <DetectorImage
                       key={panel.path}
@@ -542,6 +543,12 @@ function App() {
                       size={chartSize}
                       domain={sharedDomain}
                       singlePanel={viewMode !== "overview"}
+                      panelGeometry={lauetofPanel?.geometry}
+                      tofCenterNs={
+                        lauetofPanel
+                          ? (tofRange[0] + tofRange[1]) / 2
+                          : undefined
+                      }
                     />
                   );
                 })}
@@ -589,6 +596,16 @@ function App() {
               snapValuesNs={
                 fileType === "NXlauetof" && lauetofPanels.length > 0
                   ? Array.from(lauetofPanels[0].tofBins)
+                  : undefined
+              }
+              totalFlightPathM={
+                fileType === "NXlauetof" && lauetofPanels.length > 0 && lauetofPanels[0].geometry
+                  ? lauetofPanels[0].geometry.sourceDistance +
+                    Math.sqrt(
+                      lauetofPanels[0].geometry.origin[0] ** 2 +
+                      lauetofPanels[0].geometry.origin[1] ** 2 +
+                      lauetofPanels[0].geometry.origin[2] ** 2
+                    )
                   : undefined
               }
             />
