@@ -87,6 +87,9 @@ function App() {
   const [viewMode, setViewMode] = useState<"overview" | number>("overview");
   const [showHelp, setShowHelp] = useState(false);
 
+  const hasPanels =
+    fileType === "NXlauetof" ? lauetofPanels.length > 0 : panels.length > 0;
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
@@ -99,6 +102,26 @@ function App() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, []);
+
+  useEffect(() => {
+    if (!hasPanels) return;
+
+    const preventWindowFileDrop = (e: DragEvent) => {
+      if (!e.dataTransfer) return;
+      if (!Array.from(e.dataTransfer.types).includes("Files")) return;
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.type === "dragover") e.dataTransfer.dropEffect = "copy";
+    };
+
+    // Capture phase ensures we block browser default navigation/download behavior.
+    window.addEventListener("dragover", preventWindowFileDrop, true);
+    window.addEventListener("drop", preventWindowFileDrop, true);
+    return () => {
+      window.removeEventListener("dragover", preventWindowFileDrop, true);
+      window.removeEventListener("drop", preventWindowFileDrop, true);
+    };
+  }, [hasPanels]);
 
   const activePanelCount = fileType === "NXlauetof" ? lauetofPanels.length : panels.length;
   const displayPanelCount = viewMode === "overview" ? activePanelCount : 1;
@@ -423,7 +446,6 @@ function App() {
   }, []);
 
   // Show file loader during initial load (no panels yet) or while loading without images
-  const hasPanels = fileType === "NXlauetof" ? lauetofPanels.length > 0 : panels.length > 0;
   if (!hasPanels || (loading && detectorImages.every((d) => !d))) {
     return (
       <div className="app" data-filetype={fileType}>
