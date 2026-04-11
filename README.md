@@ -1,54 +1,120 @@
-# React + TypeScript + Vite
+# NMX Viewer
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+Interactive browser-based viewer for NMX detector data stored in NeXus/HDF5 files.
 
-Currently, two official plugins are available:
+This app is designed for fast exploration of time-of-flight neutron event data, with support for both raw event streams and pre-binned Laue TOF data.
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+## Features
 
-## Expanding the ESLint configuration
+- Load local HDF5/NeXus files directly in the browser (no server upload required)
+- Auto-detect and handle:
+  - `NXevent_data` (raw events)
+  - `NXlauetof` (pre-binned TOF slices)
+- Multi-panel detector overview and single-panel inspection modes
+- Interactive TOF filtering with:
+  - min/max range controls
+  - draggable selected window
+  - keyboard stepping with left/right arrows by current slice width
+- Shared color bar with manual min/max and auto-scaling
+- Built-in help overlay and drag-and-drop file loading
+- Reload workflow for live/SWMR-style updates
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
+## Screenshots
 
-```js
-export default tseslint.config({
-  extends: [
-    // Remove ...tseslint.configs.recommended and replace with this
-    ...tseslint.configs.recommendedTypeChecked,
-    // Alternatively, use this for stricter rules
-    ...tseslint.configs.strictTypeChecked,
-    // Optionally, add this for stylistic rules
-    ...tseslint.configs.stylisticTypeChecked,
-  ],
-  languageOptions: {
-    // other options...
-    parserOptions: {
-      project: ['./tsconfig.node.json', './tsconfig.app.json'],
-      tsconfigRootDir: import.meta.dirname,
-    },
-  },
-})
+Add screenshots here when ready.
+
+Suggested sections:
+
+- Overview mode with all detector panels
+- Single panel zoom/pan view
+- TOF slider and color bar controls
+
+Example markdown:
+
+```md
+![Overview](docs/screenshots/overview.png)
+![Single Panel](docs/screenshots/single-panel.png)
+![TOF Controls](docs/screenshots/tof-controls.png)
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+## Getting Started
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+### Prerequisites
 
-export default tseslint.config({
-  plugins: {
-    // Add the react-x and react-dom plugins
-    'react-x': reactX,
-    'react-dom': reactDom,
-  },
-  rules: {
-    // other rules...
-    // Enable its recommended typescript rules
-    ...reactX.configs['recommended-typescript'].rules,
-    ...reactDom.configs.recommended.rules,
-  },
-})
+- Node.js 18+
+- npm
+
+### Install
+
+```bash
+npm install
 ```
+
+### Run Development Server
+
+```bash
+npm run dev
+```
+
+Then open the local Vite URL (typically `http://localhost:5173`).
+
+### Build for Production
+
+```bash
+npm run build
+```
+
+### Preview Production Build
+
+```bash
+npm run preview
+```
+
+## Usage
+
+1. Start the app and load a `.h5` / `.hdf` / NeXus file.
+2. The viewer detects file type and discovers detector panels automatically.
+3. Use the TOF controls to filter the event window.
+4. Adjust color scaling (Linear, Log, SymLog, Sqrt) and domain limits.
+5. Switch between Overview and single-panel modes as needed.
+
+## Keyboard and Mouse Controls
+
+- `H`: Toggle help overlay
+- `Esc`: Close help overlay
+- `Left` / `Right`: Shift current TOF selection window
+- Single panel view:
+  - drag to zoom
+  - shift + drag to pan
+
+## Project Structure
+
+```text
+src/
+  components/
+    DetectorImage.tsx
+    FileLoader.tsx
+    TofRangeSlider.tsx
+    ViridisColorBar.tsx
+  lib/
+    event-data.ts
+    h5wasm-loader.ts
+    dspacing.ts
+  App.tsx
+```
+
+## Tech Stack
+
+- React + TypeScript
+- Vite
+- h5wasm / h5wasm-plugins
+- h5web visualization components
+
+## Notes
+
+- Large datasets can require noticeable client-side memory and processing time.
+- Build output may include a Vite chunk-size warning for the current dependency set.
+
+## License
+
+MIT License
