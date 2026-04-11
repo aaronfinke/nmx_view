@@ -64,7 +64,7 @@ function App() {
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState("");
   const [fileType, setFileType] = useState<NexusFileType>("unknown");
-  // NXeventdata state
+  // NXevent_data state
   const [panels, setPanels] = useState<DetectorPanelInfo[]>([]);
   // NXlauetof state
   const [lauetofPanels, setLauetofPanels] = useState<LauetofPanelInfo[]>([]);
@@ -135,7 +135,7 @@ function App() {
   const yieldToUI = () =>
     new Promise<void>((r) => requestAnimationFrame(() => setTimeout(r, 0)));
 
-  /** Load ALL NXeventdata panels from the file */
+  /** Load ALL NXevent_data panels from the file */
   const loadAllPanels = useCallback(
     async (h5file: H5File, foundPanels: DetectorPanelInfo[]) => {
       eventDataRef.current = new Map();
@@ -272,7 +272,7 @@ function App() {
           setStatus("Scanning for detector panels...");
           const foundPanels = findDetectorPanels(h5file);
           if (foundPanels.length === 0) {
-            setStatus("No NXEventData detector panels found in this file.");
+            setStatus("No NXevent_data detector panels found in this file.");
             setLoading(false);
             return;
           }
@@ -319,7 +319,7 @@ function App() {
       } else {
         const foundPanels = findDetectorPanels(h5file);
         if (foundPanels.length === 0) {
-          setStatus("No NXEventData detector panels found after reload.");
+          setStatus("No NXevent_data detector panels found after reload.");
           setLoading(false);
           return;
         }
@@ -375,7 +375,7 @@ function App() {
           })();
           setStatus(`${lauetofPanels.length} panels — slice ${sliceIdx + 1}/${lauetofPanels[0]?.shape[2] ?? 0}`);
         } else {
-          // NXeventdata: bin events only for visible panel(s)
+          // NXevent_data: bin events only for visible panel(s)
           setDetectorImages((prev) => {
             const images = [...prev];
             for (let i = 0; i < panels.length; i++) {

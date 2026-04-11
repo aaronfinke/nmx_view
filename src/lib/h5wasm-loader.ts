@@ -56,7 +56,7 @@ export async function openFile(file: File): Promise<H5File> {
 
 // ── File type detection ──────────────────────────────────────
 
-export type NexusFileType = "NXeventdata" | "NXlauetof" | "unknown";
+export type NexusFileType = "NXevent_data" | "NXlauetof" | "unknown";
 
 /**
  * Try to read a string value from an HDF5 dataset (handles typed arrays, Uint8Array, etc.)
@@ -159,13 +159,13 @@ export function detectFileType(h5file: H5File): NexusFileType {
       const child = instrument.get(key);
       if (!(child instanceof H5Group)) continue;
       const evGroup = findEventDataGroup(h5file, `entry/instrument/${key}`, child);
-      if (evGroup) return "NXeventdata";
+      if (evGroup) return "NXevent_data";
     }
   }
   return "unknown";
 }
 
-// ── NXeventdata panels ───────────────────────────────────────
+// ── NXevent_data panels ───────────────────────────────────────
 
 export interface DetectorPanelInfo {
   path: string;
