@@ -653,7 +653,7 @@ function App() {
             <ul>
               <li>Drag the two thumbs to set a TOF range for filtering events</li>
               <li>Enable <strong>Window</strong> mode to lock the range width and slide it as a unit</li>
-              <li>In window mode, press <strong>← / →</strong> arrow keys to step by one window width</li>
+              <li>Press <strong>← / →</strong> arrow keys to step by one current-slice width</li>
               <li>For NXLaueTOF files, the slider snaps to TOF bin centers</li>
             </ul>
             <h3>Views</h3>
