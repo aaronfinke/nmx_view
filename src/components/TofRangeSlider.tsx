@@ -54,6 +54,12 @@ export const TofRangeSlider: React.FC<TofRangeSliderProps> = ({
     fixedWindowWidthNs ? fixedWindowWidthNs * displayScale : 3000
   );
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const rangeContainerRef = useRef<HTMLDivElement | null>(null);
+  const dragStateRef = useRef<{
+    pointerId: number;
+    startClientX: number;
+    startRange: [number, number];
+  } | null>(null);
 
   // Sync forceWindowMode changes
   useEffect(() => {
@@ -178,11 +184,11 @@ export const TofRangeSlider: React.FC<TofRangeSliderProps> = ({
     [windowWidth, displayScale, localRange, tofMin, tofMax, clampRange, commitRange]
   );
 
-  // Arrow key handler: shift window by its full width
-  const shiftWindow = useCallback(
+  // Shift current selection left/right by its current width
+  const shiftSlice = useCallback(
     (direction: -1 | 1) => {
-      if (!windowEnabled || windowWidth <= 0) return;
-      const widthNs = windowWidth / displayScale;
+      const widthNs = Math.max(localRange[1] - localRange[0], 0);
+      if (widthNs <= 0) return;
       const currentCenter = (localRange[0] + localRange[1]) / 2;
       const newCenter = snapNs(currentCenter + direction * widthNs);
       let lo = newCenter - widthNs / 2;
@@ -193,23 +199,94 @@ export const TofRangeSlider: React.FC<TofRangeSliderProps> = ({
       setLocalRange(clamped);
       commitRange(clamped);
     },
-    [windowEnabled, windowWidth, displayScale, localRange, tofMin, tofMax, clampRange, commitRange, snapNs]
+    [localRange, tofMin, tofMax, clampRange, commitRange, snapNs]
+  );
+
+  // Pointer drag on selected range fill: move window without resizing
+  const handleFillPointerDown = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      if (!rangeContainerRef.current) return;
+      dragStateRef.current = {
+        pointerId: e.pointerId,
+        startClientX: e.clientX,
+        startRange: localRange,
+      };
+      e.currentTarget.setPointerCapture(e.pointerId);
+      e.preventDefault();
+    },
+    [localRange]
+  );
+
+  const handleFillPointerMove = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      const state = dragStateRef.current;
+      const container = rangeContainerRef.current;
+      if (!state || !container || state.pointerId !== e.pointerId) return;
+
+      const rect = container.getBoundingClientRect();
+      if (rect.width <= 0) return;
+
+      const deltaPx = e.clientX - state.startClientX;
+      const deltaDisplay = (deltaPx / rect.width) * ((tofMax - tofMin) * displayScale);
+      const deltaNs = deltaDisplay / displayScale;
+      const widthNs = state.startRange[1] - state.startRange[0];
+
+      let centerNs = (state.startRange[0] + state.startRange[1]) / 2 + deltaNs;
+      centerNs = snapNs(centerNs);
+
+      let lo = centerNs - widthNs / 2;
+      let hi = centerNs + widthNs / 2;
+      if (lo < tofMin) {
+        lo = tofMin;
+        hi = tofMin + widthNs;
+      }
+      if (hi > tofMax) {
+        hi = tofMax;
+        lo = tofMax - widthNs;
+      }
+
+      const clamped = clampRange(lo, hi);
+      setLocalRange(clamped);
+      commitRange(clamped);
+    },
+    [displayScale, tofMin, tofMax, clampRange, commitRange, snapNs]
+  );
+
+  const handleFillPointerUp = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      if (dragStateRef.current?.pointerId !== e.pointerId) return;
+      dragStateRef.current = null;
+      if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+        e.currentTarget.releasePointerCapture(e.pointerId);
+      }
+    },
+    []
   );
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (!windowEnabled || windowWidth <= 0) return;
+      if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+      const target = e.target as HTMLElement | null;
+      // Allow arrow keys everywhere except text/number inputs where typing matters
+      if (
+        (target instanceof HTMLInputElement && target.type !== "range") ||
+        target instanceof HTMLTextAreaElement ||
+        target instanceof HTMLSelectElement ||
+        target?.isContentEditable
+      ) {
+        return;
+      }
+      // Override the native single-thumb movement
+      e.preventDefault();
       if (e.key === "ArrowLeft") {
-        e.preventDefault();
-        shiftWindow(-1);
-      } else if (e.key === "ArrowRight") {
-        e.preventDefault();
-        shiftWindow(1);
+        shiftSlice(-1);
+      } else {
+        shiftSlice(1);
       }
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [windowEnabled, windowWidth, shiftWindow]);
+  }, [shiftSlice]);
 
   const displayMin = tofMin * displayScale;
   const displayMax = tofMax * displayScale;
@@ -241,14 +318,18 @@ export const TofRangeSlider: React.FC<TofRangeSliderProps> = ({
           step={step}
           onChange={(e) => handleChange(0, parseFloat(e.target.value) || 0)}
         />
-        <div className="dual-range-container">
+        <div className="dual-range-container" ref={rangeContainerRef}>
           <div
             className="dual-range-track-fill"
             style={{
               left: `${loPercent}%`,
               width: `${hiPercent - loPercent}%`,
-              cursor: isWindowMode ? "grab" : undefined,
+              cursor: "grab",
             }}
+            onPointerDown={handleFillPointerDown}
+            onPointerMove={handleFillPointerMove}
+            onPointerUp={handleFillPointerUp}
+            onPointerCancel={handleFillPointerUp}
           />
           {isWindowMode ? (
             <input
