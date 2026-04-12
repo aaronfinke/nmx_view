@@ -25,7 +25,7 @@ Add screenshots here when ready.
 
 Suggested sections:
 
-- Overview mode with all detector panels
+- Overview mode with all detecto r panels
 - Single panel zoom/pan view
 - TOF slider and color bar controls
 
