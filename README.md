@@ -21,21 +21,15 @@ This app is designed for fast exploration of time-of-flight neutron event data, 
 
 ## Screenshots
 
-Add screenshots here when ready.
-
-Suggested sections:
-
-- Overview mode with all detecto r panels
-- Single panel zoom/pan view
-- TOF slider and color bar controls
-
-Example markdown:
-
-```md
+### Overview window
 ![Overview](docs/screenshots/overview.png)
+
+### Single-panel window
 ![Single Panel](docs/screenshots/single-panel.png)
-![TOF Controls](docs/screenshots/tof-controls.png)
-```
+
+### TOF Window Selection
+![TOF Controls](docs/screenshots/tof-controls.gif)
+
 
 ## Getting Started
 
