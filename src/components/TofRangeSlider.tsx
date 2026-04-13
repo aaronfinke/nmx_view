@@ -263,6 +263,23 @@ export const TofRangeSlider: React.FC<TofRangeSliderProps> = ({
     []
   );
 
+  // Click on the background track in window mode: jump window center to clicked point
+  const handleTrackClick = useCallback(
+    (e: React.MouseEvent<HTMLDivElement>) => {
+      if (!windowEnabled || windowWidth <= 0) return;
+      const container = rangeContainerRef.current;
+      if (!container) return;
+      const rect = container.getBoundingClientRect();
+      if (rect.width <= 0) return;
+      const fraction = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+      const dMin = tofMin * displayScale;
+      const dMax = tofMax * displayScale;
+      const displayValue = dMin + fraction * (dMax - dMin);
+      handleCenterChange(displayValue);
+    },
+    [windowEnabled, windowWidth, tofMin, tofMax, displayScale, handleCenterChange]
+  );
+
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
@@ -318,7 +335,7 @@ export const TofRangeSlider: React.FC<TofRangeSliderProps> = ({
           step={step}
           onChange={(e) => handleChange(0, parseFloat(e.target.value) || 0)}
         />
-        <div className="dual-range-container" ref={rangeContainerRef}>
+        <div className="dual-range-container" ref={rangeContainerRef} onClick={handleTrackClick}>
           <div
             className="dual-range-track-fill"
             style={{
@@ -330,6 +347,7 @@ export const TofRangeSlider: React.FC<TofRangeSliderProps> = ({
             onPointerMove={handleFillPointerMove}
             onPointerUp={handleFillPointerUp}
             onPointerCancel={handleFillPointerUp}
+            onClick={(e) => e.stopPropagation()}
           />
           {isWindowMode ? (
             <input
