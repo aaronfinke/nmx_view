@@ -1,8 +1,8 @@
 import { useState, useCallback, useRef, useEffect, useMemo } from "react";
 import "@h5web/lib/dist/styles.css";
 import { ScaleType } from "@h5web/lib";
-import { ViridisColorBar } from "./components/ViridisColorBar";
-import type { ColorScaleType, Domain } from "@h5web/lib";
+import { ColorBar } from "./components/ViridisColorBar";
+import type { ColorMap, ColorScaleType, Domain } from "@h5web/lib";
 import { FileLoader } from "./components/FileLoader";
 import { DetectorImage } from "./components/DetectorImage";
 import { TofRangeSlider } from "./components/TofRangeSlider";
@@ -77,6 +77,7 @@ function App() {
   const [tofAbsMin, setTofAbsMin] = useState(0);
   const [tofAbsMax, setTofAbsMax] = useState(0);
   const [colorScale, setColorScale] = useState<ColorScaleType>(ScaleType.Linear);
+  const [colorMap, setColorMap] = useState<ColorMap>("Viridis");
   const [numBins] = useState(500);
   const [imageComputing, setImageComputing] = useState(false);
   const [domainMin, setDomainMin] = useState<string>("");
@@ -529,6 +530,17 @@ function App() {
               <option value={ScaleType.Sqrt}>Sqrt</option>
             </select>
           </div>
+          <div className="control-group">
+            <label>Color map:</label>
+            <select
+              value={colorMap}
+              onChange={(e) => setColorMap(e.target.value as ColorMap)}
+            >
+              <option value="Viridis">Viridis</option>
+              <option value="Inferno">Inferno</option>
+              <option value="Greys">Greys</option>
+            </select>
+          </div>
           {fileType === "NXlauetof" && (
             <span className="filetype-badge">NXLaueTOF</span>
           )}
@@ -562,6 +574,7 @@ function App() {
                       imageResult={img}
                       panelName={panel.name}
                       colorScale={colorScale}
+                      colorMap={colorMap}
                       size={chartSize}
                       domain={sharedDomain}
                       singlePanel={viewMode !== "overview"}
@@ -584,7 +597,7 @@ function App() {
                   onChange={(e) => setDomainMax(e.target.value)}
                 />
                 <div className="colorbar-gradient-wrapper">
-                  <ViridisColorBar width={30} height={chartSize - 70} />
+                  <ColorBar width={30} height={chartSize - 70} colorMap={colorMap} />
                 </div>
                 <input
                   type="number"
