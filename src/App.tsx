@@ -31,14 +31,26 @@ const CHROME_HEIGHT = 160;
 /** Width reserved for the shared color bar + domain inputs */
 const COLORBAR_WIDTH = 80;
 
-function useChartSize(panelCount: number) {
+function useChartSize(panelCount: number, isOverview: boolean) {
   const compute = () => {
-    const gap = 8; // gap between panels
-    const totalGap = (Math.max(panelCount, 1) - 1) * gap;
-    const availW = window.innerWidth - 40 - totalGap - COLORBAR_WIDTH;
+    const gap = 8;
+    const availW = window.innerWidth - 40 - COLORBAR_WIDTH;
     const availH = window.innerHeight - CHROME_HEIGHT;
-    const perPanel = availW / Math.max(panelCount, 1);
-    const s = Math.min(perPanel, availH);
+
+    // Overview uses a multi-row grid. Keep panel size moderate so rows can stack
+    // and the main viewport scrolls vertically for large panel counts.
+    if (isOverview) {
+      const cols = Math.min(3, Math.max(panelCount, 1));
+      const totalGap = (cols - 1) * gap;
+      const perPanel = (availW - totalGap) / cols;
+      const s = Math.min(perPanel, 360);
+      return Math.max(Math.floor(s), 180);
+    }
+
+    // Reserve vertical room for panel title and layout padding in single view
+    const singleViewVerticalReserve = 48;
+    const safeH = Math.max(availH - singleViewVerticalReserve, 100);
+    const s = Math.min(availW, safeH);
     return Math.max(Math.floor(s), 100);
   };
 
@@ -49,18 +61,19 @@ function useChartSize(panelCount: number) {
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [panelCount]);
+  }, [panelCount, isOverview]);
 
   // Recompute when panelCount changes
   useEffect(() => {
     setSize(compute());
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [panelCount]);
+  }, [panelCount, isOverview]);
 
   return size;
 }
 
 function App() {
+  const RECOMPUTE_OVERLAY_DELAY_MS = 1000;
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState("");
   const [fileType, setFileType] = useState<NexusFileType>("unknown");
@@ -125,12 +138,54 @@ function App() {
   }, [hasPanels]);
 
   const activePanelCount = fileType === "NXlauetof" ? lauetofPanels.length : panels.length;
+  const isOverview = viewMode === "overview";
   const displayPanelCount = viewMode === "overview" ? activePanelCount : 1;
-  const chartSize = useChartSize(displayPanelCount);
+  const chartSize = useChartSize(displayPanelCount, isOverview);
 
   const h5fileRef = useRef<H5File | null>(null);
   const eventDataRef = useRef<Map<number, EventData>>(new Map());
   const browserFileRef = useRef<File | null>(null);
+  const recomputeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const recomputeRunIdRef = useRef(0);
+
+  const clearRecomputeTimer = useCallback(() => {
+    if (recomputeTimerRef.current) {
+      clearTimeout(recomputeTimerRef.current);
+      recomputeTimerRef.current = null;
+    }
+  }, []);
+
+  const beginRecompute = useCallback(
+    (type: NexusFileType) => {
+      const runId = ++recomputeRunIdRef.current;
+      clearRecomputeTimer();
+      setImageComputing(false);
+      if (type !== "NXlauetof") {
+        recomputeTimerRef.current = setTimeout(() => {
+          if (recomputeRunIdRef.current === runId) {
+            setImageComputing(true);
+          }
+        }, RECOMPUTE_OVERLAY_DELAY_MS);
+      }
+      return runId;
+    },
+    [clearRecomputeTimer]
+  );
+
+  const endRecompute = useCallback(
+    (runId: number) => {
+      if (recomputeRunIdRef.current !== runId) return;
+      clearRecomputeTimer();
+      setImageComputing(false);
+    },
+    [clearRecomputeTimer]
+  );
+
+  useEffect(() => {
+    return () => {
+      clearRecomputeTimer();
+    };
+  }, [clearRecomputeTimer]);
 
   /** Yield to the event loop so React can render progress updates */
   const yieldToUI = () =>
@@ -338,8 +393,9 @@ function App() {
   const handleTofRangeChange = useCallback(
     (range: [number, number]) => {
       setTofRange(range);
-      setImageComputing(true);
+      const runId = beginRecompute(fileType);
       setTimeout(() => {
+        if (recomputeRunIdRef.current !== runId) return;
         if (fileType === "NXlauetof" && h5fileRef.current) {
           // NXlauetof: find closest bin center and read that single slice
           const center = (range[0] + range[1]) / 2;
@@ -362,7 +418,7 @@ function App() {
             }
             return images;
           });
-          setImageComputing(false);
+          endRecompute(runId);
           const sliceIdx = (() => {
             const p = lauetofPanels[0];
             if (!p) return 0;
@@ -389,7 +445,7 @@ function App() {
             }
             return images;
           });
-          setImageComputing(false);
+          endRecompute(runId);
           const totalEvents = detectorImages.reduce(
             (s, img) => s + (img?.totalEvents ?? 0),
             0
@@ -400,7 +456,7 @@ function App() {
         }
       }, 0);
     },
-    [fileType, panels, lauetofPanels, viewMode]
+    [beginRecompute, endRecompute, fileType, panels, lauetofPanels, viewMode, detectorImages]
   );
 
   // Compute auto domain: min=0, max=min(vals.max(), mu + 2*sigma)
@@ -554,40 +610,45 @@ function App() {
         </div>
       </header>
 
-      <main className="app-main">
+      <main className={`app-main ${isOverview ? "overview-main" : "single-panel-main"}`}>
         {detectorImages.length > 0 && (
           <>
-            <div className="detector-panels-row">
-              {imageComputing && (
+            <div className="detector-layout">
+              {imageComputing && fileType !== "NXlauetof" && (
                 <div className="computing-overlay">Recomputing...</div>
               )}
-              {(fileType === "NXlauetof" ? lauetofPanels : panels)
-                .map((panel, i) => ({ panel, i }))
-                .filter(({ i }) => viewMode === "overview" || i === viewMode)
-                .map(({ panel, i }) => {
-                  const img = detectorImages[i];
-                  if (!img) return null;
-                  const lauetofPanel = fileType === "NXlauetof" ? lauetofPanels[i] : null;
-                  return (
-                    <DetectorImage
-                      key={panel.path}
-                      imageResult={img}
-                      panelName={panel.name}
-                      colorScale={colorScale}
-                      colorMap={colorMap}
-                      size={chartSize}
-                      domain={sharedDomain}
-                      singlePanel={viewMode !== "overview"}
-                      panelGeometry={lauetofPanel?.geometry}
-                      tofCenterNs={
-                        lauetofPanel
-                          ? (tofRange[0] + tofRange[1]) / 2
-                          : undefined
-                      }
-                    />
-                  );
-                })}
-              <div className="shared-colorbar" style={{ height: chartSize }}>
+              <div className={`detector-panels-grid ${isOverview ? "overview" : "single"}`}>
+                {(fileType === "NXlauetof" ? lauetofPanels : panels)
+                  .map((panel, i) => ({ panel, i }))
+                  .filter(({ i }) => viewMode === "overview" || i === viewMode)
+                  .map(({ panel, i }) => {
+                    const img = detectorImages[i];
+                    if (!img) return null;
+                    const lauetofPanel = fileType === "NXlauetof" ? lauetofPanels[i] : null;
+                    return (
+                      <DetectorImage
+                        key={panel.path}
+                        imageResult={img}
+                        panelName={panel.name}
+                        colorScale={colorScale}
+                        colorMap={colorMap}
+                        size={chartSize}
+                        domain={sharedDomain}
+                        singlePanel={viewMode !== "overview"}
+                        panelGeometry={lauetofPanel?.geometry}
+                        tofCenterNs={
+                          lauetofPanel
+                            ? (tofRange[0] + tofRange[1]) / 2
+                            : undefined
+                        }
+                      />
+                    );
+                  })}
+              </div>
+              <div
+                className={`shared-colorbar ${isOverview ? "shared-colorbar-overview" : "shared-colorbar-single"}`}
+                style={isOverview ? undefined : { height: chartSize }}
+              >
                 <input
                   type="number"
                   className="colorbar-domain-input colorbar-domain-max"
@@ -616,37 +677,42 @@ function App() {
                 </button>
               </div>
             </div>
-            <TofRangeSlider
-              tofMin={tofAbsMin}
-              tofMax={tofAbsMax}
-              tofRange={tofRange}
-              onTofRangeChange={handleTofRangeChange}
-              unit={tofUnit}
-              forceWindowMode={fileType === "NXlauetof"}
-              fixedWindowWidthNs={
-                fileType === "NXlauetof" && lauetofPanels.length > 0 && lauetofPanels[0].tofBins.length > 1
-                  ? lauetofPanels[0].tofBins[1] - lauetofPanels[0].tofBins[0]
-                  : undefined
-              }
-              snapValuesNs={
-                fileType === "NXlauetof" && lauetofPanels.length > 0
-                  ? Array.from(lauetofPanels[0].tofBins)
-                  : undefined
-              }
-              totalFlightPathM={
-                fileType === "NXlauetof" && lauetofPanels.length > 0 && lauetofPanels[0].geometry
-                  ? lauetofPanels[0].geometry.sourceDistance +
-                    Math.sqrt(
-                      lauetofPanels[0].geometry.origin[0] ** 2 +
-                      lauetofPanels[0].geometry.origin[1] ** 2 +
-                      lauetofPanels[0].geometry.origin[2] ** 2
-                    )
-                  : undefined
-              }
-            />
           </>
         )}
       </main>
+
+      {detectorImages.length > 0 && (
+        <div className="tof-dock">
+          <TofRangeSlider
+            tofMin={tofAbsMin}
+            tofMax={tofAbsMax}
+            tofRange={tofRange}
+            onTofRangeChange={handleTofRangeChange}
+            unit={tofUnit}
+            forceWindowMode={fileType === "NXlauetof"}
+            fixedWindowWidthNs={
+              fileType === "NXlauetof" && lauetofPanels.length > 0 && lauetofPanels[0].tofBins.length > 1
+                ? lauetofPanels[0].tofBins[1] - lauetofPanels[0].tofBins[0]
+                : undefined
+            }
+            snapValuesNs={
+              fileType === "NXlauetof" && lauetofPanels.length > 0
+                ? Array.from(lauetofPanels[0].tofBins)
+                : undefined
+            }
+            totalFlightPathM={
+              fileType === "NXlauetof" && lauetofPanels.length > 0 && lauetofPanels[0].geometry
+                ? lauetofPanels[0].geometry.sourceDistance +
+                  Math.sqrt(
+                    lauetofPanels[0].geometry.origin[0] ** 2 +
+                    lauetofPanels[0].geometry.origin[1] ** 2 +
+                    lauetofPanels[0].geometry.origin[2] ** 2
+                  )
+                : undefined
+            }
+          />
+        </div>
+      )}
 
       <div className="status-bar">{status}</div>
 
@@ -671,7 +737,7 @@ function App() {
             </ul>
             <h3>Views</h3>
             <ul>
-              <li><strong>Overview</strong>: all detector panels side by side</li>
+              <li><strong>Overview</strong>: all detector panels in a vertically scrollable grid</li>
               <li><strong>Single panel</strong>: select a panel from the View dropdown for a larger view with zoom</li>
             </ul>
             <h3>Zoom (Single Panel View)</h3>

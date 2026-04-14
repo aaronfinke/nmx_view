@@ -159,13 +159,42 @@
   padding: 0.5rem;
 }
 
+.app-main.single-panel-main {
+  overflow: hidden;
+}
+
+.tof-dock {
+  flex-shrink: 0;
+  padding: 0.25rem 0.75rem;
+  background: #ffffff;
+  border-top: 1px solid rgba(0, 51, 102, 0.12);
+  border-bottom: 1px solid rgba(0, 51, 102, 0.2);
+}
+
 /* Detector Image Panel */
-.detector-panels-row {
+.detector-layout {
   display: flex;
-  justify-content: center;
   align-items: flex-start;
   gap: 8px;
   position: relative;
+}
+
+.detector-panels-grid {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.detector-panels-grid.overview {
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  align-content: start;
+  justify-items: center;
+}
+
+.detector-panels-grid.single {
+  grid-template-columns: 1fr;
+  justify-items: center;
 }
 
 .computing-overlay {
@@ -186,6 +215,14 @@
 
 .detector-image-panel {
   text-align: center;
+}
+
+.shared-colorbar-overview {
+  height: calc(100vh - 260px);
+  min-height: 220px;
+  align-self: flex-start;
+  position: sticky;
+  top: 0.5rem;
 }
 
 /* Hide h5web's built-in color bar inside each panel */
