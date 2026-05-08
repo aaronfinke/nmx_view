@@ -91,7 +91,7 @@ function App() {
   const [tofAbsMin, setTofAbsMin] = useState(0);
   const [tofAbsMax, setTofAbsMax] = useState(0);
   const [colorScale, setColorScale] = useState<ColorScaleType>(ScaleType.Linear);
-  const [colorMap, setColorMap] = useState<ColorMap>("Viridis");
+  const [colorMap, setColorMap] = useState<ColorMap | "Greys_r">("Viridis");
   const [numBins] = useState(500);
   const [imageComputing, setImageComputing] = useState(false);
   const [domainMin, setDomainMin] = useState<string>("");
@@ -621,11 +621,11 @@ function App() {
             <label>Color map:</label>
             <select
               value={colorMap}
-              onChange={(e) => setColorMap(e.target.value as ColorMap)}
+              onChange={(e) => setColorMap(e.target.value as ColorMap | "Greys_r")}
             >
               <option value="Viridis">Viridis</option>
               <option value="Inferno">Inferno</option>
-              <option value="Greys">Greys</option>
+              <option value="Greys_r">Greys</option>
             </select>
           </div>
           {fileType === "NXlauetof" && (
