@@ -57,8 +57,8 @@ const INFERNO_DATA = [
 ];
 
 const GREYS_DATA = [
-  [0.0, 0.0, 0.0],
   [1.0, 1.0, 1.0],
+  [0.0, 0.0, 0.0],
 ];
 
 const LUTS: Record<string, [number, number, number][]> = {
