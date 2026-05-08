@@ -10,7 +10,7 @@ interface DetectorImageProps {
   imageResult: DetectorImageResult;
   panelName: string;
   colorScale?: ColorScaleType;
-  colorMap?: ColorMap;
+  colorMap?: ColorMap | "Greys_r";
   /** Explicit size in px for the square chart; computed from window size by parent */
   size: number;
   /** Shared domain from parent */
@@ -27,7 +27,7 @@ export const DetectorImage: React.FC<DetectorImageProps> = ({
   imageResult,
   panelName,
   colorScale = ScaleType.Log,
-  colorMap = "Viridis",
+  colorMap = "Viridis" as ColorMap | "Greys_r",
   size,
   domain,
   singlePanel = false,
@@ -92,7 +92,7 @@ export const DetectorImage: React.FC<DetectorImageProps> = ({
   );
 
   return (
-    <div className="detector-image-panel">
+    <div className="detector-image-panel" data-invert={colorMap === "Greys_r" ? "true" : undefined}>
       <h3>
         {panelName} — {totalEvents.toLocaleString()} events
       </h3>
@@ -107,7 +107,7 @@ export const DetectorImage: React.FC<DetectorImageProps> = ({
         <HeatmapVis
           dataArray={dataNd}
           domain={domain}
-          colorMap={colorMap}
+          colorMap={colorMap === "Greys_r" ? "Greys" : colorMap}
           scaleType={colorScale}
           aspect="equal"
           showGrid={false}

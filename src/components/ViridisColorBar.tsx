@@ -57,6 +57,11 @@ const INFERNO_DATA = [
 ];
 
 const GREYS_DATA = [
+  [0.0, 0.0, 0.0],
+  [1.0, 1.0, 1.0],
+];
+
+const GREYS_R_DATA = [
   [1.0, 1.0, 1.0],
   [0.0, 0.0, 0.0],
 ];
@@ -65,12 +70,13 @@ const LUTS: Record<string, [number, number, number][]> = {
   Viridis: buildLut(VIRIDIS_DATA),
   Inferno: buildLut(INFERNO_DATA),
   Greys: buildLut(GREYS_DATA),
+  Greys_r: buildLut(GREYS_R_DATA),
 };
 
 interface Props {
   width: number;
   height: number;
-  colorMap?: ColorMap;
+  colorMap?: ColorMap | "Greys_r";
 }
 
 export function ColorBar({ width, height, colorMap = "Viridis" }: Props) {

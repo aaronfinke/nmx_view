@@ -225,6 +225,11 @@
   top: 0.5rem;
 }
 
+/* Invert the WebGL canvas for Greys_r (white=min, black=max) */
+.detector-image-panel[data-invert="true"] canvas {
+  filter: invert(1);
+}
+
 /* Hide h5web's built-in color bar inside each panel */
 .detector-image-panel [class*="_colorBar_"] {
   display: none !important;
