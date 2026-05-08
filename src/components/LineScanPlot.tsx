@@ -62,10 +62,7 @@ export const LineScanPlot: React.FC<LineScanPlotProps> = ({
       </div>
 
       {!profile ? (
-        <div className="line-scan-empty">
-          Enable <strong>Line Scan</strong> mode and click two points on the
-          detector to extract a 1D profile
-        </div>
+        <div className="line-scan-empty" />
       ) : (
         <svg
           width={LINE_SCAN_PLOT_WIDTH}
