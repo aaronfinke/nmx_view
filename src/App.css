@@ -160,7 +160,8 @@
 }
 
 .app-main.single-panel-main {
-  overflow: hidden;
+  overflow-x: auto;
+  overflow-y: hidden;
 }
 
 .tof-dock {
@@ -217,6 +218,109 @@
   text-align: center;
 }
 
+.detector-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  margin-bottom: 0.25rem;
+  min-height: 28px;
+}
+
+.detector-panel-header h3 {
+  margin: 0;
+  font-size: 1rem;
+  color: #003366;
+}
+
+/* Vertical tool toolbar \u2014 floats inside the image at top-left */
+.detector-toolbar {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 4px;
+  background: rgba(255, 255, 255, 0.85);
+  border: 1px solid rgba(0, 51, 102, 0.25);
+  border-radius: 6px;
+  backdrop-filter: blur(4px);
+  box-shadow: 0 1px 4px rgba(0,0,0,0.18);
+}
+
+.toolbar-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  color: #003366;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s, color 0.12s;
+  padding: 0;
+}
+.toolbar-btn:hover {
+  background: rgba(0, 51, 102, 0.12);
+  border-color: rgba(0, 51, 102, 0.25);
+}
+.toolbar-btn.active {
+  background: #003366;
+  border-color: #003366;
+  color: #ffffff;
+}
+
+/* Line scan plot panel */
+.line-scan-plot {
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  width: 320px;
+  border-left: 1px solid rgba(0, 51, 102, 0.15);
+  padding-left: 10px;
+}
+
+.line-scan-plot-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 32px;
+  flex-shrink: 0;
+}
+
+.line-scan-plot-title {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: #003366;
+}
+
+.line-scan-clear-btn {
+  font-size: 0.75rem;
+  padding: 2px 10px;
+  background: #003366;
+  color: #ffffff;
+  border: none;
+  border-radius: 3px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.line-scan-clear-btn:hover {
+  background: #0099DC;
+}
+
+.line-scan-empty {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 1rem;
+  text-align: center;
+  color: rgba(0, 51, 102, 0.4);
+  font-size: 0.8rem;
+  line-height: 1.5;
+}
+
 .shared-colorbar-overview {
   height: calc(100vh - 260px);
   min-height: 220px;
@@ -230,17 +334,17 @@
   display: none !important;
 }
 
-/* Hide h5web axis ticks and labels — use visibility:hidden (not display:none)
-   to preserve layout space so h5web's coordinate calculations stay correct */
-.detector-image-panel [class*="axis"] text,
-.detector-image-panel [class*="axis"] line {
-  visibility: hidden;
+/* Hide h5web axis SVG containers and collapse their grid areas to 0. */
+.detector-image-panel [class*="_axis_1002b06"],
+.detector-image-panel [class*="_axis_2dee224"] {
+  display: none !important;
 }
 
-.detector-image-panel h3 {
-  margin: 0 0 0.25rem;
-  font-size: 1rem;
-  color: #003366;
+/* Collapse the left-axis column and bottom-axis row in h5web's visCanvas grid
+   so the canvas area fills the full containerRef div from edge to edge. */
+.detector-image-panel [class*="_visCanvas_"] {
+  grid-template-columns: 0 1fr !important;
+  grid-template-rows: 0 1fr 0 !important;
 }
 
 .detector-tooltip {

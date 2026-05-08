@@ -169,8 +169,16 @@ export const TofRangeSlider: React.FC<TofRangeSliderProps> = ({
   const handleWindowToggle = useCallback(
     (checked: boolean) => {
       setWindowEnabled(checked);
-      if (checked && windowWidth > 0) {
-        const widthNs = windowWidth / displayScale;
+      if (checked) {
+        const currentWidthDisplay = Math.max(
+          (localRange[1] - localRange[0]) * displayScale,
+          0
+        );
+        const widthDisplay = forceWindowMode ? windowWidth : currentWidthDisplay;
+        if (widthDisplay <= 0) return;
+        setWindowWidth(widthDisplay);
+
+        const widthNs = widthDisplay / displayScale;
         const currentCenterNs = (localRange[0] + localRange[1]) / 2;
         let lo = currentCenterNs - widthNs / 2;
         let hi = currentCenterNs + widthNs / 2;
@@ -181,7 +189,7 @@ export const TofRangeSlider: React.FC<TofRangeSliderProps> = ({
         commitRange(clamped);
       }
     },
-    [windowWidth, displayScale, localRange, tofMin, tofMax, clampRange, commitRange]
+    [windowWidth, displayScale, localRange, tofMin, tofMax, clampRange, commitRange, forceWindowMode]
   );
 
   // Shift current selection left/right by its current width
@@ -318,6 +326,12 @@ export const TofRangeSlider: React.FC<TofRangeSliderProps> = ({
 
   const isWindowMode = windowEnabled && windowWidth > 0;
   const centerDisplay = ((localRange[0] + localRange[1]) / 2) * displayScale;
+  const currentWindowWidthDisplay = Math.max(
+    (localRange[1] - localRange[0]) * displayScale,
+    0
+  );
+  const shownWindowWidthDisplay =
+    !windowEnabled && !forceWindowMode ? currentWindowWidthDisplay : windowWidth;
 
   // Wavelength for current range center (Å)
   const lambdaCenter = totalFlightPathM && totalFlightPathM > 0
@@ -408,7 +422,7 @@ export const TofRangeSlider: React.FC<TofRangeSliderProps> = ({
         <input
           type="number"
           className="tof-number tof-window-input"
-          value={windowWidth}
+          value={shownWindowWidthDisplay}
           step={step}
           min={0}
           disabled={!windowEnabled || forceWindowMode}
