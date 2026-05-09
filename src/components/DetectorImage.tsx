@@ -30,8 +30,45 @@ interface DetectorImageProps {
     endPx: [number, number],
     lengthPx: number
   ) => void;
-  /** Increment to imperatively clear the drawn line */
+  /** Called with integrated profile after a box is drawn */
+  onBoxDrawn?: (profile: number[], axisStart: number, axisEnd: number, axis: "slow" | "fast") => void;
+  /** Increment to imperatively clear all drawings */
   clearLine?: number;
+}
+
+/**
+ * Integrate a box region.
+ * integrateAlong="slow": sum over rows → profile vs column (fast axis)
+ * integrateAlong="fast": sum over columns → profile vs row (slow axis)
+ */
+function extractBoxProfile(
+  image: Float64Array,
+  shape: [number, number],
+  detStart: [number, number],
+  detEnd: [number, number],
+  integrateAlong: "slow" | "fast" = "slow"
+): { profile: number[]; axisStart: number; axisEnd: number } {
+  const [rows, cols] = shape;
+  const c0 = Math.max(0, Math.min(cols - 1, Math.round(Math.min(detStart[0], detEnd[0]))));
+  const c1 = Math.max(0, Math.min(cols - 1, Math.round(Math.max(detStart[0], detEnd[0]))));
+  const r0 = Math.max(0, Math.min(rows - 1, Math.round(Math.min(detStart[1], detEnd[1]))));
+  const r1 = Math.max(0, Math.min(rows - 1, Math.round(Math.max(detStart[1], detEnd[1]))));
+  const profile: number[] = [];
+  if (integrateAlong === "slow") {
+    for (let c = c0; c <= c1; c++) {
+      let sum = 0;
+      for (let r = r0; r <= r1; r++) sum += image[r * cols + c];
+      profile.push(sum);
+    }
+    return { profile, axisStart: c0, axisEnd: c1 };
+  } else {
+    for (let r = r0; r <= r1; r++) {
+      let sum = 0;
+      for (let c = c0; c <= c1; c++) sum += image[r * cols + c];
+      profile.push(sum);
+    }
+    return { profile, axisStart: r0, axisEnd: r1 };
+  }
 }
 
 /** Sum pixel values along a line with a perpendicular box of given thickness. */
@@ -71,15 +108,14 @@ function extractLineProfile(
   return profile;
 }
 
-function LineOverlay({ svgLine, drawPhase, lineThickness, size, shape }: {
+function LineOverlay({ svgLine, drawPhase, size, shape }: {
   svgLine: { x1: number; y1: number; x2: number; y2: number };
   drawPhase: "idle" | "awaiting-end";
-  lineThickness: number;
   size: number;
   shape: [number, number];
 }) {
   const detScale = size / Math.max(shape[0], shape[1]);
-  const sw = Math.max(2, lineThickness * detScale);
+  const sw = Math.max(2, detScale);
   const inProgress = drawPhase === "awaiting-end";
   return (
     <>
@@ -108,6 +144,7 @@ export const DetectorImage: React.FC<DetectorImageProps> = ({
   tofCenterNs,
   enableLineScan = false,
   onLineDrawn,
+  onBoxDrawn,
   clearLine = 0,
 }) => {
   const { image, shape, totalEvents } = imageResult;
@@ -119,19 +156,22 @@ export const DetectorImage: React.FC<DetectorImageProps> = ({
 
   // --- Tool mode & line scan state (two-click model) ---
   // toolMode: "zoom" enables h5web select-to-zoom; "linescan" uses two-click line drawing.
-  const [lineThickness, setLineThickness] = useState(1);
-  const [toolMode, setToolMode] = useState<"zoom" | "linescan">("zoom");
+  const [boxIntegAxis, setBoxIntegAxis] = useState<"slow" | "fast">("slow");
+  const [toolMode, setToolMode] = useState<"zoom" | "linescan" | "box">("zoom");
   const [drawPhase, setDrawPhase] = useState<"idle" | "awaiting-end">("idle");
   const drawPhaseRef = useRef<"idle" | "awaiting-end">("idle");
-  const [svgLine, setSvgLine] = useState<{
-    x1: number; y1: number; x2: number; y2: number;
-  } | null>(null);
+  const [svgLine, setSvgLine] = useState<{ x1: number; y1: number; x2: number; y2: number } | null>(null);
+  const [svgBox, setSvgBox] = useState<{ x1: number; y1: number; x2: number; y2: number } | null>(null);
   // Incrementing this key forces HeatmapVis to remount, resetting zoom.
   const [vizKey, setVizKey] = useState(0);
   const svgStartRef = useRef({ x: 0, y: 0 });
   const lineScanStartRef = useRef<[number, number]>([0, 0]);
+  const boxStartDetRef = useRef<[number, number]>([0, 0]);
   const [committedLine, setCommittedLine] = useState<{
     start: [number, number]; end: [number, number]; length: number;
+  } | null>(null);
+  const [committedBox, setCommittedBox] = useState<{
+    detStart: [number, number]; detEnd: [number, number];
   } | null>(null);
   // Updated by renderTooltip on every hover move (no button held).
   const detectorPosRef = useRef<[number, number]>([0, 0]);
@@ -139,20 +179,20 @@ export const DetectorImage: React.FC<DetectorImageProps> = ({
   // Ref to the heatmap wrapper div.
   const containerRef = useRef<HTMLDivElement>(null);
 
-  // Keyboard shortcuts: Z = zoom mode, L = line scan mode, Esc = cancel line / reset zoom.
+  // Keyboard shortcuts: Z = zoom, L = line scan, B = box, Esc = cancel / reset zoom.
   useEffect(() => {
     if (!singlePanel || !enableLineScan) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
-      if (e.key === "z" || e.key === "Z") {
-        setToolMode("zoom");
-      } else if (e.key === "l" || e.key === "L") {
-        setToolMode("linescan");
-      } else if (e.key === "Escape") {
+      if (e.key === "z" || e.key === "Z") setToolMode("zoom");
+      else if (e.key === "l" || e.key === "L") setToolMode("linescan");
+      else if (e.key === "b" || e.key === "B") setToolMode("box");
+      else if (e.key === "Escape") {
         if (drawPhaseRef.current === "awaiting-end") {
           drawPhaseRef.current = "idle";
           setDrawPhase("idle");
           setSvgLine(null);
+          setSvgBox(null);
         } else {
           setVizKey((k) => k + 1);
         }
@@ -162,71 +202,88 @@ export const DetectorImage: React.FC<DetectorImageProps> = ({
     return () => window.removeEventListener("keydown", onKey);
   }, [singlePanel, enableLineScan]);
 
-  // Clear drawn line when parent requests it.
+  // Clear all drawings when parent requests it.
   useEffect(() => {
     if (clearLine > 0) {
       drawPhaseRef.current = "idle";
       setDrawPhase("idle");
       setSvgLine(null);
       setCommittedLine(null);
+      setSvgBox(null);
+      setCommittedBox(null);
     }
   }, [clearLine]);
 
-  // Clear drawn line when exiting line scan mode.
+  // Clear drawings when switching tool mode.
   useEffect(() => {
-    if (toolMode !== "linescan") {
-      drawPhaseRef.current = "idle";
-      setDrawPhase("idle");
-      setSvgLine(null);
-      setCommittedLine(null);
-    }
+    drawPhaseRef.current = "idle";
+    setDrawPhase("idle");
+    setSvgLine(null);
+    setCommittedLine(null);
+    setSvgBox(null);
+    setCommittedBox(null);
   }, [toolMode]);
 
-  // Recompute profile when thickness changes (line already drawn).
+  // Recompute line profile when thickness or image changes.
   useEffect(() => {
     if (!committedLine) return;
     const { start, end, length } = committedLine;
-    const profile = extractLineProfile(image, shape, start, end, 256, lineThickness);
+    const profile = extractLineProfile(image, shape, start, end, 256, 1);
     onLineDrawn?.(profile, start, end, length);
-  }, [lineThickness, image]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [image]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Recompute box profile when image or integration axis changes.
+  useEffect(() => {
+    if (!committedBox) return;
+    const { detStart, detEnd } = committedBox;
+    const { profile, axisStart, axisEnd } = extractBoxProfile(image, shape, detStart, detEnd, boxIntegAxis);
+    onBoxDrawn?.(profile, axisStart, axisEnd, boxIntegAxis);
+  }, [image, boxIntegAxis]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleContainerPointerDown = useCallback(
     (e: React.PointerEvent<HTMLDivElement>) => {
-      if (toolMode !== "linescan" || e.button !== 0) return;
+      if (e.button !== 0 || (toolMode !== "linescan" && toolMode !== "box")) return;
       const rect = e.currentTarget.getBoundingClientRect();
       const x = e.clientX - rect.left;
       const y = e.clientY - rect.top;
-      // detectorPosRef was last updated by renderTooltip on the most recent
-      // pointermove (no button held), so it accurately reflects the hover
-      // position just before this click.
       const [detX, detY] = detectorPosRef.current;
 
       if (drawPhaseRef.current === "idle") {
-        // First click: record start
-        lineScanStartRef.current = [detX, detY];
         svgStartRef.current = { x, y };
         drawPhaseRef.current = "awaiting-end";
         setDrawPhase("awaiting-end");
-        setSvgLine({ x1: x, y1: y, x2: x, y2: y });
+        if (toolMode === "linescan") {
+          lineScanStartRef.current = [detX, detY];
+          setSvgLine({ x1: x, y1: y, x2: x, y2: y });
+        } else {
+          boxStartDetRef.current = [detX, detY];
+          setSvgBox({ x1: x, y1: y, x2: x, y2: y });
+        }
       } else {
-        // Second click: record end and compute profile
         drawPhaseRef.current = "idle";
         setDrawPhase("idle");
-        const startDet = lineScanStartRef.current;
-        const endDet: [number, number] = [detX, detY];
-        const lengthPx = Math.sqrt(
-          (endDet[0] - startDet[0]) ** 2 + (endDet[1] - startDet[1]) ** 2
-        );
-        if (lengthPx < 2) {
-          setSvgLine(null);
-          return;
+        if (toolMode === "linescan") {
+          const startDet = lineScanStartRef.current;
+          const endDet: [number, number] = [detX, detY];
+          const lengthPx = Math.sqrt((endDet[0] - startDet[0]) ** 2 + (endDet[1] - startDet[1]) ** 2);
+          if (lengthPx < 2) { setSvgLine(null); return; }
+          const profile = extractLineProfile(image, shape, startDet, endDet, 256, 1);
+          setCommittedLine({ start: startDet, end: endDet, length: lengthPx });
+          onLineDrawn?.(profile, startDet, endDet, lengthPx);
+        } else {
+          const startDet = boxStartDetRef.current;
+          const endDet: [number, number] = [detX, detY];
+          if (Math.abs(endDet[0] - startDet[0]) < 2 && Math.abs(endDet[1] - startDet[1]) < 2) {
+            setSvgBox(null); return;
+          }
+          setSvgBox({ x1: svgStartRef.current.x, y1: svgStartRef.current.y, x2: x, y2: y });
+          const { profile, axisStart, axisEnd } = extractBoxProfile(image, shape, startDet, endDet, boxIntegAxis);
+          setCommittedBox({ detStart: startDet, detEnd: endDet });
+          onBoxDrawn?.(profile, axisStart, axisEnd, boxIntegAxis);
         }
-        const profile = extractLineProfile(image, shape, startDet, endDet, 256, lineThickness);
-        setCommittedLine({ start: startDet, end: endDet, length: lengthPx });
-        onLineDrawn?.(profile, startDet, endDet, lengthPx);
       }
     },
-    [toolMode, image, shape, onLineDrawn, lineThickness]
+    [toolMode, image, shape, onLineDrawn, onBoxDrawn]
   );
 
   // Between the two clicks no button is held — just update the SVG preview.
@@ -237,9 +294,10 @@ export const DetectorImage: React.FC<DetectorImageProps> = ({
       const x = e.clientX - rect.left;
       const y = e.clientY - rect.top;
       const s = svgStartRef.current;
-      setSvgLine({ x1: s.x, y1: s.y, x2: x, y2: y });
+      if (toolMode === "linescan") setSvgLine({ x1: s.x, y1: s.y, x2: x, y2: y });
+      else if (toolMode === "box") setSvgBox({ x1: s.x, y1: s.y, x2: x, y2: y });
     },
-    []
+    [toolMode]
   );
 
   // h5web interactions: enable zoom controls only in zoom mode.
@@ -330,68 +388,47 @@ export const DetectorImage: React.FC<DetectorImageProps> = ({
             renderTooltip={renderTooltip}
           />
 
-        {/* Visual line overlay — pointer-events: none so events reach h5web */}
-        {toolMode === "linescan" && (
-          <svg
-            style={{
-              position: "absolute",
-              top: 0,
-              left: 0,
-              width: "100%",
-              height: "100%",
-              pointerEvents: "none",
-              zIndex: 5,
-            }}
-          >
-            {/* Prompt / status text */}
-            {!svgLine && (
-              <text
-                x="50%"
-                y="50%"
-                textAnchor="middle"
-                dominantBaseline="middle"
-                fill="rgba(255,255,255,0.75)"
-                fontSize={13}
-                style={{ userSelect: "none" }}
-              >
+        {/* Drawing overlay — pointer-events: none so events reach h5web */}
+        {(toolMode === "linescan" || toolMode === "box") && (
+          <svg style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%", pointerEvents: "none", zIndex: 5 }}>
+            {/* Prompt text */}
+            {!svgLine && !svgBox && (
+              <text x="50%" y="50%" textAnchor="middle" dominantBaseline="middle"
+                fill="rgba(255,255,255,0.75)" fontSize={13} style={{ userSelect: "none" }}>
                 Click to set start point
               </text>
             )}
-            {svgLine && drawPhase === "awaiting-end" && (
-              <text
-                x="50%"
-                y="calc(100% - 12px)"
-                textAnchor="middle"
-                dominantBaseline="middle"
-                fill="rgba(255,255,255,0.65)"
-                fontSize={12}
-                style={{ userSelect: "none" }}
-              >
+            {(svgLine || svgBox) && drawPhase === "awaiting-end" && (
+              <text x="50%" y="calc(100% - 12px)" textAnchor="middle" dominantBaseline="middle"
+                fill="rgba(255,255,255,0.65)" fontSize={12} style={{ userSelect: "none" }}>
                 Click to set end point — Esc to cancel
               </text>
             )}
-
-            {/* The drawn / in-progress line */}
             {svgLine && (
-              <LineOverlay
-                svgLine={svgLine}
-                drawPhase={drawPhase}
-                lineThickness={lineThickness}
-                size={size}
-                shape={shape}
-              />
+              <LineOverlay svgLine={svgLine} drawPhase={drawPhase} size={size} shape={shape} />
             )}
+            {svgBox && (() => {
+              const x = Math.min(svgBox.x1, svgBox.x2);
+              const y = Math.min(svgBox.y1, svgBox.y2);
+              const w = Math.abs(svgBox.x2 - svgBox.x1);
+              const h = Math.abs(svgBox.y2 - svgBox.y1);
+              return (
+                <rect x={x} y={y} width={w} height={h}
+                  fill="rgba(0,153,220,0.12)"
+                  stroke="rgba(255,255,255,0.6)"
+                  strokeWidth={1.5}
+                  strokeDasharray={drawPhase === "awaiting-end" ? "6 3" : "none"}
+                />
+              );
+            })()}
           </svg>
         )}
 
         {/* Toolbar — absolutely positioned top-left, pointer events enabled */}
         {singlePanel && enableLineScan && (
           <div className="detector-toolbar" style={{ position: "absolute", top: 4, left: 4, zIndex: 10 }} onPointerDown={(e) => e.stopPropagation()}>
-            <button
-              className={`toolbar-btn${toolMode === "zoom" ? " active" : ""}`}
-              onClick={() => setToolMode("zoom")}
-              title="Zoom mode (Z) — select-to-zoom; Esc resets zoom"
-            >
+            <button className={`toolbar-btn${toolMode === "zoom" ? " active" : ""}`}
+              onClick={() => setToolMode("zoom")} title="Zoom mode (Z) — select-to-zoom; Esc resets zoom">
               <svg width="18" height="18" viewBox="0 0 18 18" fill="none" xmlns="http://www.w3.org/2000/svg">
                 <circle cx="7.5" cy="7.5" r="5" stroke="currentColor" strokeWidth="1.8"/>
                 <line x1="11.5" y1="11.5" x2="16" y2="16" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"/>
@@ -399,28 +436,43 @@ export const DetectorImage: React.FC<DetectorImageProps> = ({
                 <line x1="5" y1="7.5" x2="10" y2="7.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
               </svg>
             </button>
-            <button
-              className={`toolbar-btn${toolMode === "linescan" ? " active" : ""}`}
-              onClick={() => setToolMode("linescan")}
-              title="Line scan mode (L) — click two points to extract a profile"
-            >
+            <button className={`toolbar-btn${toolMode === "linescan" ? " active" : ""}`}
+              onClick={() => setToolMode("linescan")} title="Line scan mode (L) — click two points to extract a profile">
               <svg width="18" height="18" viewBox="0 0 18 18" fill="none" xmlns="http://www.w3.org/2000/svg">
                 <circle cx="3" cy="15" r="2" fill="currentColor"/>
                 <circle cx="15" cy="3" r="2" fill="currentColor"/>
                 <line x1="4.4" y1="13.6" x2="13.6" y2="4.4" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeDasharray="3 2"/>
               </svg>
             </button>
-            {toolMode === "linescan" && (
-              <div className="toolbar-thickness" title="Line thickness (pixels)">
-                <span>W</span>
-                <input
-                  type="number"
-                  min={1}
-                  max={99}
-                  value={lineThickness}
-                  onChange={(e) => setLineThickness(Math.max(1, Math.round(Number(e.target.value))))}
-                />
-              </div>
+            <button className={`toolbar-btn${toolMode === "box" ? " active" : ""}`}
+              onClick={() => setToolMode("box")} title="Box integration mode (B) — click two corners to integrate along rows">
+              <svg width="18" height="18" viewBox="0 0 18 18" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <rect x="2" y="5" width="14" height="8" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round"/>
+                <line x1="9" y1="5" x2="9" y2="13" stroke="currentColor" strokeWidth="1" strokeDasharray="2 2"/>
+              </svg>
+            </button>
+            {toolMode === "box" && (
+              <button
+                className="toolbar-btn"
+                onClick={() => setBoxIntegAxis((a) => a === "slow" ? "fast" : "slow")}
+                title={boxIntegAxis === "slow" ? "Integrating along slow axis (Y) — click to switch to fast axis (X)" : "Integrating along fast axis (X) — click to switch to slow axis (Y)"}
+              >
+                <svg width="18" height="18" viewBox="0 0 18 18" fill="none" xmlns="http://www.w3.org/2000/svg">
+                  {boxIntegAxis === "slow" ? (
+                    <>
+                      <line x1="3" y1="3" x2="3" y2="15" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"/>
+                      <line x1="3" y1="15" x2="15" y2="15" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"/>
+                      <path d="M5 12 Q9 4 13 12" stroke="currentColor" strokeWidth="1.5" fill="none" strokeLinecap="round"/>
+                    </>
+                  ) : (
+                    <>
+                      <line x1="3" y1="3" x2="3" y2="15" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"/>
+                      <line x1="3" y1="15" x2="15" y2="15" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"/>
+                      <path d="M6 13 Q6 7 12 7" stroke="currentColor" strokeWidth="1.5" fill="none" strokeLinecap="round"/>
+                    </>
+                  )}
+                </svg>
+              </button>
             )}
           </div>
         )}

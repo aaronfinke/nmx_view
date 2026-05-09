@@ -101,9 +101,13 @@ function App() {
   const [fileName, setFileName] = useState("");
   const [viewMode, setViewMode] = useState<"overview" | number>("overview");
   const [showHelp, setShowHelp] = useState(false);
-  // Line scan state (single-panel only)
+  // Line scan / box integration state (single-panel only)
   const [lineScanProfile, setLineScanProfile] = useState<number[] | null>(null);
   const [lineScanLength, setLineScanLength] = useState(0);
+  const [boxProfile, setBoxProfile] = useState<number[] | null>(null);
+  const [boxColStart, setBoxColStart] = useState(0);
+  const [boxColEnd, setBoxColEnd] = useState(0);
+  const [boxAxis, setBoxAxis] = useState<"slow" | "fast">("slow");
   const [clearLineSignal, setClearLineSignal] = useState(0);
 
   const hasPanels =
@@ -524,12 +528,25 @@ function App() {
     ) => {
       setLineScanProfile(profile);
       setLineScanLength(Math.round(lengthPx));
+      setBoxProfile(null);
+    },
+    []
+  );
+
+  const handleBoxDrawn = useCallback(
+    (profile: number[], axisStart: number, axisEnd: number, axis: "slow" | "fast") => {
+      setBoxProfile(profile);
+      setBoxColStart(axisStart);
+      setBoxColEnd(axisEnd);
+      setBoxAxis(axis);
+      setLineScanProfile(null);
     },
     []
   );
 
   const handleLineScanClear = useCallback(() => {
     setLineScanProfile(null);
+    setBoxProfile(null);
     setClearLineSignal((s) => s + 1);
   }, []);
 
@@ -674,6 +691,7 @@ function App() {
                         }
                         enableLineScan={viewMode !== "overview"}
                         onLineDrawn={handleLineDrawn}
+                        onBoxDrawn={handleBoxDrawn}
                         clearLine={clearLineSignal}
                       />
                     );
@@ -710,13 +728,16 @@ function App() {
                   Auto
                 </button>
               </div>
-              {/* Line scan profile — shown after the colorbar in single-panel mode */}
+              {/* Profile plot — line scan or box integration, single-panel mode only */}
               {!isOverview && (
                 <LineScanPlot
-                  profile={lineScanProfile}
-                  lineLength={lineScanLength}
+                  profile={boxProfile ?? lineScanProfile}
+                  lineLength={boxProfile ? boxColEnd - boxColStart : lineScanLength}
                   height={Math.round((chartSize + 36) / 2)}
                   onClear={handleLineScanClear}
+                  title={boxProfile ? "Box Profile" : "Line Profile"}
+                  xAxisLabel={boxProfile ? (boxAxis === "slow" ? "Fast Axis (px)" : "Row (px)") : "Slow Axis (px)"}
+                  xOffset={boxProfile ? boxColStart : 0}
                 />
               )}
             </div>

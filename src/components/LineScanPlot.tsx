@@ -11,6 +11,10 @@ interface LineScanPlotProps {
   /** Height in px to match the adjacent detector panel */
   height: number;
   onClear: () => void;
+  title?: string;
+  xAxisLabel?: string;
+  /** Value added to x-tick labels (e.g. first column index for box profiles) */
+  xOffset?: number;
 }
 
 export const LineScanPlot: React.FC<LineScanPlotProps> = ({
@@ -18,6 +22,9 @@ export const LineScanPlot: React.FC<LineScanPlotProps> = ({
   lineLength,
   height,
   onClear,
+  title = "Line Profile",
+  xAxisLabel = "Position (px)",
+  xOffset = 0,
 }) => {
   const HEADER_H = 32;
   const svgH = height - HEADER_H;
@@ -42,7 +49,7 @@ export const LineScanPlot: React.FC<LineScanPlotProps> = ({
 
   const xTicks = [0, 0.25, 0.5, 0.75, 1.0].map((t) => ({
     x: PAD.left + t * plotW,
-    label: Math.round(t * lineLength),
+    label: xOffset + Math.round(t * lineLength),
   }));
 
   const yTicks = [0, 0.5, 1.0].map((t) => ({
@@ -53,7 +60,7 @@ export const LineScanPlot: React.FC<LineScanPlotProps> = ({
   return (
     <div className="line-scan-plot">
       <div className="line-scan-plot-header">
-        <span className="line-scan-plot-title">Line Profile</span>
+        <span className="line-scan-plot-title">{title}</span>
         {profile && (
           <button className="line-scan-clear-btn" onClick={onClear}>
             Clear
@@ -142,7 +149,7 @@ export const LineScanPlot: React.FC<LineScanPlotProps> = ({
             fontSize={11}
             fill="#003366"
           >
-            Position (px)
+            {xAxisLabel}
           </text>
           <text
             x={10}
