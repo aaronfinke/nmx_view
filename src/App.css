@@ -216,6 +216,7 @@
 
 .detector-image-panel {
   text-align: center;
+  overflow: hidden;
 }
 
 .detector-panel-header {
