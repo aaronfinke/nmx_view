@@ -44,7 +44,7 @@ function useChartSize(panelCount: number, isOverview: boolean, extraWidthReserve
       const cols = Math.min(3, Math.max(panelCount, 1));
       const totalGap = (cols - 1) * gap;
       const perPanel = (availW - totalGap) / cols;
-      const s = Math.min(perPanel, 360);
+      const s = Math.min(perPanel, 480);
       return Math.max(Math.floor(s), 180);
     }
 
@@ -90,7 +90,7 @@ function App() {
   const tofUnit = "µs";
   const [tofAbsMin, setTofAbsMin] = useState(0);
   const [tofAbsMax, setTofAbsMax] = useState(0);
-  const [colorScale, setColorScale] = useState<ColorScaleType>(ScaleType.Linear);
+  const [colorScale] = useState<ColorScaleType>(ScaleType.Linear);
   const [colorMap, setColorMap] = useState<ColorMap | "Greys_r">("Viridis");
   const [numBins] = useState(500);
   const [imageComputing, setImageComputing] = useState(false);
@@ -605,7 +605,7 @@ function App() {
             </select>
           </div>
 
-          <div className="control-group">
+          {/* <div className="control-group">
             <label>Color scale:</label>
             <select
               value={colorScale}
@@ -616,7 +616,7 @@ function App() {
               <option value={ScaleType.SymLog}>SymLog</option>
               <option value={ScaleType.Sqrt}>Sqrt</option>
             </select>
-          </div>
+          </div> */}
           <div className="control-group">
             <label>Color map:</label>
             <select
@@ -692,7 +692,7 @@ function App() {
                   onChange={(e) => setDomainMax(e.target.value)}
                 />
                 <div className="colorbar-gradient-wrapper">
-                  <ColorBar width={30} height={chartSize - 70} colorMap={colorMap} />
+                  <ColorBar width={30} colorMap={colorMap} />
                 </div>
                 <input
                   type="number"

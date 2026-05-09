@@ -101,6 +101,8 @@
   flex: 1;
   width: 100%;
   min-height: 0;
+  display: flex;
+  justify-content: center;
 }
 
 .colorbar-domain-input {
@@ -188,7 +190,7 @@
 }
 
 .detector-panels-grid.overview {
-  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(420px, 1fr));
   align-content: start;
   justify-items: center;
 }
@@ -215,8 +217,9 @@
 }
 
 .detector-image-panel {
-  text-align: center;
-  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
 }
 
 .detector-panel-header {
@@ -340,17 +343,11 @@
   display: none !important;
 }
 
-/* Hide h5web axis SVG containers and collapse their grid areas to 0. */
-.detector-image-panel [class*="_axis_1002b06"],
-.detector-image-panel [class*="_axis_2dee224"] {
-  display: none !important;
-}
-
-/* Collapse the left-axis column and bottom-axis row in h5web's visCanvas grid
-   so the canvas area fills the full containerRef div from edge to edge. */
-.detector-image-panel [class*="_visCanvas_"] {
-  grid-template-columns: 0 1fr !important;
-  grid-template-rows: 0 1fr 0 !important;
+/* Hide h5web axis ticks and labels — use visibility:hidden (not display:none)
+   to preserve layout space so h5web's coordinate calculations stay correct */
+.detector-image-panel [class*="axis"] text,
+.detector-image-panel [class*="axis"] line {
+  visibility: hidden;
 }
 
 .detector-tooltip {
