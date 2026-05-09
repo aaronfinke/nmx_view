@@ -34,25 +34,66 @@ interface DetectorImageProps {
   clearLine?: number;
 }
 
-/** Sample pixel values along a line using linear interpolation. */
+/** Sum pixel values along a line with a perpendicular box of given thickness. */
 function extractLineProfile(
   image: Float64Array,
   shape: [number, number],
   start: [number, number],
   end: [number, number],
-  numSamples = 256
+  numSamples = 256,
+  thickness = 1
 ): number[] {
   const [rows, cols] = shape;
   const [c0, r0] = start;
   const [c1, r1] = end;
+  const dx = c1 - c0;
+  const dy = r1 - r0;
+  const len = Math.sqrt(dx * dx + dy * dy);
+  // Perpendicular unit vector
+  const px = len > 0 ? -dy / len : 0;
+  const py = len > 0 ?  dx / len : 0;
+  const halfT = Math.floor(thickness / 2);
   const profile: number[] = [];
   for (let i = 0; i <= numSamples; i++) {
     const t = i / numSamples;
-    const col = Math.max(0, Math.min(cols - 1, Math.round(c0 + t * (c1 - c0))));
-    const row = Math.max(0, Math.min(rows - 1, Math.round(r0 + t * (r1 - r0))));
-    profile.push(image[row * cols + col]);
+    const cx = c0 + t * dx;
+    const cy = r0 + t * dy;
+    let sum = 0;
+    for (let k = -halfT; k <= halfT; k++) {
+      const col = Math.round(cx + k * px);
+      const row = Math.round(cy + k * py);
+      if (col >= 0 && col < cols && row >= 0 && row < rows) {
+        sum += image[row * cols + col];
+      }
+    }
+    profile.push(sum);
   }
   return profile;
+}
+
+function LineOverlay({ svgLine, drawPhase, lineThickness, size, shape }: {
+  svgLine: { x1: number; y1: number; x2: number; y2: number };
+  drawPhase: "idle" | "awaiting-end";
+  lineThickness: number;
+  size: number;
+  shape: [number, number];
+}) {
+  const detScale = size / Math.max(shape[0], shape[1]);
+  const sw = Math.max(2, lineThickness * detScale);
+  const inProgress = drawPhase === "awaiting-end";
+  return (
+    <>
+      <line x1={svgLine.x1} y1={svgLine.y1} x2={svgLine.x2} y2={svgLine.y2}
+        stroke="rgba(0,0,0,0.25)" strokeWidth={sw + 2} strokeLinecap="round" />
+      <line x1={svgLine.x1} y1={svgLine.y1} x2={svgLine.x2} y2={svgLine.y2}
+        stroke="rgba(255,255,255,0.35)" strokeWidth={sw}
+        strokeDasharray={inProgress ? "6 3" : "none"} strokeLinecap="round" />
+      <circle cx={svgLine.x1} cy={svgLine.y1} r={5} fill="white" stroke="#0099DC" strokeWidth={2} />
+      {drawPhase === "idle" && (
+        <circle cx={svgLine.x2} cy={svgLine.y2} r={5} fill="white" stroke="#0099DC" strokeWidth={2} />
+      )}
+    </>
+  );
 }
 
 export const DetectorImage: React.FC<DetectorImageProps> = ({
@@ -78,6 +119,7 @@ export const DetectorImage: React.FC<DetectorImageProps> = ({
 
   // --- Tool mode & line scan state (two-click model) ---
   // toolMode: "zoom" enables h5web select-to-zoom; "linescan" uses two-click line drawing.
+  const [lineThickness, setLineThickness] = useState(1);
   const [toolMode, setToolMode] = useState<"zoom" | "linescan">("zoom");
   const [drawPhase, setDrawPhase] = useState<"idle" | "awaiting-end">("idle");
   const drawPhaseRef = useRef<"idle" | "awaiting-end">("idle");
@@ -88,6 +130,9 @@ export const DetectorImage: React.FC<DetectorImageProps> = ({
   const [vizKey, setVizKey] = useState(0);
   const svgStartRef = useRef({ x: 0, y: 0 });
   const lineScanStartRef = useRef<[number, number]>([0, 0]);
+  const [committedLine, setCommittedLine] = useState<{
+    start: [number, number]; end: [number, number]; length: number;
+  } | null>(null);
   // Updated by renderTooltip on every hover move (no button held).
   const detectorPosRef = useRef<[number, number]>([0, 0]);
 
@@ -123,6 +168,7 @@ export const DetectorImage: React.FC<DetectorImageProps> = ({
       drawPhaseRef.current = "idle";
       setDrawPhase("idle");
       setSvgLine(null);
+      setCommittedLine(null);
     }
   }, [clearLine]);
 
@@ -132,8 +178,17 @@ export const DetectorImage: React.FC<DetectorImageProps> = ({
       drawPhaseRef.current = "idle";
       setDrawPhase("idle");
       setSvgLine(null);
+      setCommittedLine(null);
     }
   }, [toolMode]);
+
+  // Recompute profile when thickness changes (line already drawn).
+  useEffect(() => {
+    if (!committedLine) return;
+    const { start, end, length } = committedLine;
+    const profile = extractLineProfile(image, shape, start, end, 256, lineThickness);
+    onLineDrawn?.(profile, start, end, length);
+  }, [lineThickness, image]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleContainerPointerDown = useCallback(
     (e: React.PointerEvent<HTMLDivElement>) => {
@@ -166,11 +221,12 @@ export const DetectorImage: React.FC<DetectorImageProps> = ({
           setSvgLine(null);
           return;
         }
-        const profile = extractLineProfile(image, shape, startDet, endDet);
+        const profile = extractLineProfile(image, shape, startDet, endDet, 256, lineThickness);
+        setCommittedLine({ start: startDet, end: endDet, length: lengthPx });
         onLineDrawn?.(profile, startDet, endDet, lengthPx);
       }
     },
-    [toolMode, image, shape, onLineDrawn]
+    [toolMode, image, shape, onLineDrawn, lineThickness]
   );
 
   // Between the two clicks no button is held — just update the SVG preview.
@@ -317,54 +373,20 @@ export const DetectorImage: React.FC<DetectorImageProps> = ({
 
             {/* The drawn / in-progress line */}
             {svgLine && (
-              <>
-                <line
-                  x1={svgLine.x1}
-                  y1={svgLine.y1}
-                  x2={svgLine.x2}
-                  y2={svgLine.y2}
-                  stroke="rgba(0,0,0,0.5)"
-                  strokeWidth={4}
-                  strokeLinecap="round"
-                />
-                <line
-                  x1={svgLine.x1}
-                  y1={svgLine.y1}
-                  x2={svgLine.x2}
-                  y2={svgLine.y2}
-                  stroke="white"
-                  strokeWidth={2}
-                  strokeDasharray={drawPhase === "awaiting-end" ? "6 3" : "none"}
-                  strokeLinecap="round"
-                />
-                {/* Start marker always shown once set */}
-                <circle
-                  cx={svgLine.x1}
-                  cy={svgLine.y1}
-                  r={5}
-                  fill="white"
-                  stroke="#0099DC"
-                  strokeWidth={2}
-                />
-                {/* End marker shown only after line is finalised */}
-                {drawPhase === "idle" && (
-                  <circle
-                    cx={svgLine.x2}
-                    cy={svgLine.y2}
-                    r={5}
-                    fill="white"
-                    stroke="#0099DC"
-                    strokeWidth={2}
-                  />
-                )}
-              </>
+              <LineOverlay
+                svgLine={svgLine}
+                drawPhase={drawPhase}
+                lineThickness={lineThickness}
+                size={size}
+                shape={shape}
+              />
             )}
           </svg>
         )}
 
         {/* Toolbar — absolutely positioned top-left, pointer events enabled */}
         {singlePanel && enableLineScan && (
-          <div className="detector-toolbar" style={{ position: "absolute", top: 4, left: 4, zIndex: 10 }}>
+          <div className="detector-toolbar" style={{ position: "absolute", top: 4, left: 4, zIndex: 10 }} onPointerDown={(e) => e.stopPropagation()}>
             <button
               className={`toolbar-btn${toolMode === "zoom" ? " active" : ""}`}
               onClick={() => setToolMode("zoom")}
@@ -388,6 +410,18 @@ export const DetectorImage: React.FC<DetectorImageProps> = ({
                 <line x1="4.4" y1="13.6" x2="13.6" y2="4.4" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeDasharray="3 2"/>
               </svg>
             </button>
+            {toolMode === "linescan" && (
+              <div className="toolbar-thickness" title="Line thickness (pixels)">
+                <span>W</span>
+                <input
+                  type="number"
+                  min={1}
+                  max={99}
+                  value={lineThickness}
+                  onChange={(e) => setLineThickness(Math.max(1, Math.round(Number(e.target.value))))}
+                />
+              </div>
+            )}
           </div>
         )}
       </div>
