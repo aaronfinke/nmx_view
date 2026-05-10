@@ -294,10 +294,32 @@
   flex-shrink: 0;
 }
 
+.line-scan-plot-actions {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+
 .line-scan-plot-title {
   font-size: 0.9rem;
   font-weight: 600;
   color: #003366;
+}
+
+.line-scan-analyze-btn {
+  font-size: 0.75rem;
+  padding: 2px 10px;
+  background: #99BE00;
+  color: #003300;
+  border: none;
+  border-radius: 3px;
+  cursor: pointer;
+  font-weight: 600;
+  transition: background 0.15s;
+}
+.line-scan-analyze-btn:hover {
+  background: #7a9900;
+  color: #fff;
 }
 
 .line-scan-clear-btn {
@@ -312,6 +334,56 @@
 }
 .line-scan-clear-btn:hover {
   background: #0099DC;
+}
+
+.peak-analysis {
+  padding: 8px 0 4px;
+  border-top: 1px solid rgba(0, 51, 102, 0.15);
+  margin-top: 6px;
+  max-height: 250px;
+  overflow-y: auto;
+}
+
+.peak-analysis-subtitle {
+  font-size: 0.72rem;
+  color: rgba(0, 51, 102, 0.6);
+  margin: 0 0 6px;
+}
+
+.peak-analysis-empty {
+  font-size: 0.75rem;
+  color: rgba(0, 51, 102, 0.45);
+  margin: 4px 0;
+  font-style: italic;
+}
+
+.peak-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.72rem;
+  color: #003366;
+}
+.peak-table th {
+  text-align: right;
+  font-weight: 600;
+  padding: 2px 4px;
+  border-bottom: 1px solid rgba(0, 51, 102, 0.25);
+  color: rgba(0, 51, 102, 0.7);
+  font-size: 0.68rem;
+  letter-spacing: 0.03em;
+}
+.peak-table th:first-child,
+.peak-table td:first-child {
+  text-align: center;
+}
+.peak-table td {
+  text-align: right;
+  padding: 2px 4px;
+  border-bottom: 1px solid rgba(0, 51, 102, 0.07);
+  font-variant-numeric: tabular-nums;
+}
+.peak-table tbody tr:hover {
+  background: rgba(0, 153, 220, 0.06);
 }
 
 .line-scan-empty {
