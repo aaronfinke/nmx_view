@@ -6,6 +6,7 @@ import type { ColorMap, ColorScaleType, Domain } from "@h5web/lib";
 import { FileLoader } from "./components/FileLoader";
 import { DetectorImage } from "./components/DetectorImage";
 import { TofRangeSlider } from "./components/TofRangeSlider";
+import { LineScanPlot, LINE_SCAN_PLOT_WIDTH } from "./components/LineScanPlot";
 import {
   openFile,
   detectFileType,
@@ -31,10 +32,10 @@ const CHROME_HEIGHT = 160;
 /** Width reserved for the shared color bar + domain inputs */
 const COLORBAR_WIDTH = 80;
 
-function useChartSize(panelCount: number, isOverview: boolean) {
+function useChartSize(panelCount: number, isOverview: boolean, extraWidthReserve = 0) {
   const compute = () => {
     const gap = 8;
-    const availW = window.innerWidth - 40 - COLORBAR_WIDTH;
+    const availW = window.innerWidth - 40 - COLORBAR_WIDTH - extraWidthReserve;
     const availH = window.innerHeight - CHROME_HEIGHT;
 
     // Overview uses a multi-row grid. Keep panel size moderate so rows can stack
@@ -43,7 +44,7 @@ function useChartSize(panelCount: number, isOverview: boolean) {
       const cols = Math.min(3, Math.max(panelCount, 1));
       const totalGap = (cols - 1) * gap;
       const perPanel = (availW - totalGap) / cols;
-      const s = Math.min(perPanel, 360);
+      const s = Math.min(perPanel, 480);
       return Math.max(Math.floor(s), 180);
     }
 
@@ -61,13 +62,13 @@ function useChartSize(panelCount: number, isOverview: boolean) {
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [panelCount, isOverview]);
+  }, [panelCount, isOverview, extraWidthReserve]);
 
   // Recompute when panelCount changes
   useEffect(() => {
     setSize(compute());
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [panelCount, isOverview]);
+  }, [panelCount, isOverview, extraWidthReserve]);
 
   return size;
 }
@@ -89,7 +90,7 @@ function App() {
   const tofUnit = "µs";
   const [tofAbsMin, setTofAbsMin] = useState(0);
   const [tofAbsMax, setTofAbsMax] = useState(0);
-  const [colorScale, setColorScale] = useState<ColorScaleType>(ScaleType.Linear);
+  const [colorScale] = useState<ColorScaleType>(ScaleType.Linear);
   const [colorMap, setColorMap] = useState<ColorMap | "Greys_r">("Viridis");
   const [numBins] = useState(500);
   const [imageComputing, setImageComputing] = useState(false);
@@ -100,6 +101,14 @@ function App() {
   const [fileName, setFileName] = useState("");
   const [viewMode, setViewMode] = useState<"overview" | number>("overview");
   const [showHelp, setShowHelp] = useState(false);
+  // Line scan / box integration state (single-panel only)
+  const [lineScanProfile, setLineScanProfile] = useState<number[] | null>(null);
+  const [lineScanLength, setLineScanLength] = useState(0);
+  const [boxProfile, setBoxProfile] = useState<number[] | null>(null);
+  const [boxColStart, setBoxColStart] = useState(0);
+  const [boxColEnd, setBoxColEnd] = useState(0);
+  const [boxAxis, setBoxAxis] = useState<"slow" | "fast">("slow");
+  const [clearLineSignal, setClearLineSignal] = useState(0);
 
   const hasPanels =
     fileType === "NXlauetof" ? lauetofPanels.length > 0 : panels.length > 0;
@@ -140,7 +149,15 @@ function App() {
   const activePanelCount = fileType === "NXlauetof" ? lauetofPanels.length : panels.length;
   const isOverview = viewMode === "overview";
   const displayPanelCount = viewMode === "overview" ? activePanelCount : 1;
-  const chartSize = useChartSize(displayPanelCount, isOverview);
+  // Reserve space for the line scan plot in single-panel mode.
+  const lineScanReserve = isOverview ? 0 : LINE_SCAN_PLOT_WIDTH + 8;
+  const chartSize = useChartSize(displayPanelCount, isOverview, lineScanReserve);
+
+  // Clear line scan state whenever the user switches view mode.
+  useEffect(() => {
+    setLineScanProfile(null);
+    setClearLineSignal((s) => s + 1);
+  }, [viewMode]);
 
   const h5fileRef = useRef<H5File | null>(null);
   const eventDataRef = useRef<Map<number, EventData>>(new Map());
@@ -502,6 +519,37 @@ function App() {
     setDomainMax("");
   }, []);
 
+  const handleLineDrawn = useCallback(
+    (
+      profile: number[],
+      _startPx: [number, number],
+      _endPx: [number, number],
+      lengthPx: number
+    ) => {
+      setLineScanProfile(profile);
+      setLineScanLength(Math.round(lengthPx));
+      setBoxProfile(null);
+    },
+    []
+  );
+
+  const handleBoxDrawn = useCallback(
+    (profile: number[], axisStart: number, axisEnd: number, axis: "slow" | "fast") => {
+      setBoxProfile(profile);
+      setBoxColStart(axisStart);
+      setBoxColEnd(axisEnd);
+      setBoxAxis(axis);
+      setLineScanProfile(null);
+    },
+    []
+  );
+
+  const handleLineScanClear = useCallback(() => {
+    setLineScanProfile(null);
+    setBoxProfile(null);
+    setClearLineSignal((s) => s + 1);
+  }, []);
+
   // Show file loader during initial load (no panels yet) or while loading without images
   if (!hasPanels || (loading && detectorImages.every((d) => !d))) {
     return (
@@ -574,7 +622,7 @@ function App() {
             </select>
           </div>
 
-          <div className="control-group">
+          {/* <div className="control-group">
             <label>Color scale:</label>
             <select
               value={colorScale}
@@ -585,7 +633,7 @@ function App() {
               <option value={ScaleType.SymLog}>SymLog</option>
               <option value={ScaleType.Sqrt}>Sqrt</option>
             </select>
-          </div>
+          </div> */}
           <div className="control-group">
             <label>Color map:</label>
             <select
@@ -641,6 +689,10 @@ function App() {
                             ? (tofRange[0] + tofRange[1]) / 2
                             : undefined
                         }
+                        enableLineScan={viewMode !== "overview"}
+                        onLineDrawn={handleLineDrawn}
+                        onBoxDrawn={handleBoxDrawn}
+                        clearLine={clearLineSignal}
                       />
                     );
                   })}
@@ -658,7 +710,7 @@ function App() {
                   onChange={(e) => setDomainMax(e.target.value)}
                 />
                 <div className="colorbar-gradient-wrapper">
-                  <ColorBar width={30} height={chartSize - 70} colorMap={colorMap} />
+                  <ColorBar width={30} colorMap={colorMap} />
                 </div>
                 <input
                   type="number"
@@ -676,6 +728,18 @@ function App() {
                   Auto
                 </button>
               </div>
+              {/* Profile plot — line scan or box integration, single-panel mode only */}
+              {!isOverview && (
+                <LineScanPlot
+                  profile={boxProfile ?? lineScanProfile}
+                  lineLength={boxProfile ? boxColEnd - boxColStart : lineScanLength}
+                  height={Math.round((chartSize + 36) / 2)}
+                  onClear={handleLineScanClear}
+                  title={boxProfile ? "Box Profile" : "Line Profile"}
+                  xAxisLabel={boxProfile ? (boxAxis === "slow" ? "Fast Axis (px)" : "Row (px)") : "Slow Axis (px)"}
+                  xOffset={boxProfile ? boxColStart : 0}
+                />
+              )}
             </div>
           </>
         )}
@@ -740,11 +804,11 @@ function App() {
               <li><strong>Overview</strong>: all detector panels in a vertically scrollable grid</li>
               <li><strong>Single panel</strong>: select a panel from the View dropdown for a larger view with zoom</li>
             </ul>
-            <h3>Zoom (Single Panel View)</h3>
+            <h3>Toolbar (Single Panel View)</h3>
+            <p>The vertical toolbar to the left of the image switches between two modes:</p>
             <ul>
-              <li><strong>Click & drag</strong> to draw a selection box and zoom in</li>
-              <li><strong>Shift + drag</strong> to pan</li>
-              <li>Click <strong>Reset Zoom</strong> to return to the full view</li>
+              <li><strong>🔍 Zoom mode</strong> (<kbd>Z</kbd>) — click &amp; drag to draw a selection box and zoom in; <strong>Shift&nbsp;+&nbsp;drag</strong> to pan; <kbd>Esc</kbd> resets zoom</li>
+              <li><strong>Line Scan mode</strong> (<kbd>L</kbd>) — click to set the start point, then click again to set the end point; a 1D intensity profile is plotted to the right; <kbd>Esc</kbd> cancels a line in progress</li>
             </ul>
             <h3>Color Scale</h3>
             <ul>
