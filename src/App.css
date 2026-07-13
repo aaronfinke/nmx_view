@@ -196,7 +196,9 @@
 }
 
 .detector-panels-grid.single {
-  grid-template-columns: 1fr;
+  /* Fill the leftover width so the colorbar + analysis column stay pinned to the
+     right edge (no blank gap to their right); the detector centers within. */
+  grid-template-columns: minmax(0, 1fr);
   justify-items: center;
 }
 
@@ -277,6 +279,44 @@
 
 
 /* Line scan plot panel */
+/* Right-hand analysis column — stacks the box/line profile and the TOF profile */
+.analysis-column {
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  gap: 8px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  /* Reserve a stable gutter so the vertical scrollbar never overlaps the plots. */
+  scrollbar-gutter: stable;
+}
+
+/* Draggable divider between the detector and the analysis column */
+.panel-resizer {
+  flex: 0 0 auto;
+  align-self: stretch;
+  cursor: col-resize;
+  background: transparent;
+  position: relative;
+  touch-action: none;
+}
+.panel-resizer::before {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 3px;
+  height: 44px;
+  border-radius: 2px;
+  background: rgba(0, 51, 102, 0.25);
+  transition: background 0.15s;
+}
+.panel-resizer:hover::before {
+  background: #0099DC;
+  height: 64px;
+}
+
 .line-scan-plot {
   display: flex;
   flex-direction: column;
@@ -284,6 +324,125 @@
   width: 320px;
   border-left: 1px solid rgba(0, 51, 102, 0.15);
   padding-left: 10px;
+}
+
+/* TOF profile plot — mirrors line-scan-plot, sits below the box profile */
+.tof-profile-plot {
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  width: 320px;
+  border-left: 1px solid rgba(0, 51, 102, 0.15);
+  border-top: 1px solid rgba(0, 51, 102, 0.15);
+  padding-left: 10px;
+  padding-top: 6px;
+}
+
+.tof-profile-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 32px;
+  flex-shrink: 0;
+}
+
+.tof-profile-title {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: #003366;
+}
+
+.tof-profile-actions {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+
+.tof-profile-apply-btn {
+  font-size: 0.75rem;
+  padding: 2px 10px;
+  background: #99BE00;
+  color: #003300;
+  border: none;
+  border-radius: 3px;
+  cursor: pointer;
+  font-weight: 600;
+  transition: background 0.15s;
+}
+.tof-profile-apply-btn:hover {
+  background: #7a9900;
+  color: #fff;
+}
+
+.tof-profile-clear-btn {
+  font-size: 0.75rem;
+  padding: 2px 10px;
+  background: #003366;
+  color: #ffffff;
+  border: none;
+  border-radius: 3px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.tof-profile-clear-btn:hover {
+  background: #0099DC;
+}
+
+.tof-profile-empty {
+  font-size: 0.78rem;
+  color: rgba(0, 51, 102, 0.5);
+  font-style: italic;
+  padding: 8px 4px;
+  line-height: 1.4;
+}
+
+.tof-profile-roi {
+  padding: 6px 0 2px;
+}
+
+.tof-profile-roi-inputs {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.tof-profile-roi-inputs label {
+  display: flex;
+  flex-direction: column;
+  font-size: 0.68rem;
+  color: rgba(0, 51, 102, 0.7);
+  gap: 2px;
+}
+
+.tof-profile-roi-inputs input {
+  width: 72px;
+  padding: 2px 4px;
+  font-size: 0.75rem;
+  border: 1px solid rgba(0, 51, 102, 0.3);
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.9);
+  color: #003366;
+}
+.tof-profile-roi-inputs input:focus {
+  outline: 1px solid #0099DC;
+  background: #ffffff;
+}
+
+.tof-profile-unit {
+  font-size: 0.72rem;
+  color: rgba(0, 51, 102, 0.6);
+  align-self: flex-end;
+  padding-bottom: 3px;
+}
+
+.tof-profile-readout {
+  margin: 6px 0 0;
+  font-size: 0.78rem;
+  color: #003366;
+}
+.tof-profile-readout strong {
+  color: #7a9900;
 }
 
 .line-scan-plot-header {

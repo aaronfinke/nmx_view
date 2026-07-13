@@ -31,7 +31,13 @@ interface DetectorImageProps {
     lengthPx: number
   ) => void;
   /** Called with integrated profile after a box is drawn */
-  onBoxDrawn?: (profile: number[], axisStart: number, axisEnd: number, axis: "slow" | "fast") => void;
+  onBoxDrawn?: (
+    profile: number[],
+    axisStart: number,
+    axisEnd: number,
+    axis: "slow" | "fast",
+    box: { r0: number; r1: number; c0: number; c1: number }
+  ) => void;
   /** Increment to imperatively clear all drawings */
   clearLine?: number;
 }
@@ -47,12 +53,13 @@ function extractBoxProfile(
   detStart: [number, number],
   detEnd: [number, number],
   integrateAlong: "slow" | "fast" = "slow"
-): { profile: number[]; axisStart: number; axisEnd: number } {
+): { profile: number[]; axisStart: number; axisEnd: number; box: { r0: number; r1: number; c0: number; c1: number } } {
   const [rows, cols] = shape;
   const c0 = Math.max(0, Math.min(cols - 1, Math.round(Math.min(detStart[0], detEnd[0]))));
   const c1 = Math.max(0, Math.min(cols - 1, Math.round(Math.max(detStart[0], detEnd[0]))));
   const r0 = Math.max(0, Math.min(rows - 1, Math.round(Math.min(detStart[1], detEnd[1]))));
   const r1 = Math.max(0, Math.min(rows - 1, Math.round(Math.max(detStart[1], detEnd[1]))));
+  const box = { r0, r1, c0, c1 };
   const profile: number[] = [];
   if (integrateAlong === "slow") {
     for (let c = c0; c <= c1; c++) {
@@ -60,14 +67,14 @@ function extractBoxProfile(
       for (let r = r0; r <= r1; r++) sum += image[r * cols + c];
       profile.push(sum);
     }
-    return { profile, axisStart: c0, axisEnd: c1 };
+    return { profile, axisStart: c0, axisEnd: c1, box };
   } else {
     for (let r = r0; r <= r1; r++) {
       let sum = 0;
       for (let c = c0; c <= c1; c++) sum += image[r * cols + c];
       profile.push(sum);
     }
-    return { profile, axisStart: r0, axisEnd: r1 };
+    return { profile, axisStart: r0, axisEnd: r1, box };
   }
 }
 
@@ -236,8 +243,8 @@ export const DetectorImage: React.FC<DetectorImageProps> = ({
   useEffect(() => {
     if (!committedBox) return;
     const { detStart, detEnd } = committedBox;
-    const { profile, axisStart, axisEnd } = extractBoxProfile(image, shape, detStart, detEnd, boxIntegAxis);
-    onBoxDrawn?.(profile, axisStart, axisEnd, boxIntegAxis);
+    const { profile, axisStart, axisEnd, box } = extractBoxProfile(image, shape, detStart, detEnd, boxIntegAxis);
+    onBoxDrawn?.(profile, axisStart, axisEnd, boxIntegAxis, box);
   }, [image, boxIntegAxis]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleContainerPointerDown = useCallback(
@@ -277,9 +284,9 @@ export const DetectorImage: React.FC<DetectorImageProps> = ({
             setSvgBox(null); return;
           }
           setSvgBox({ x1: svgStartRef.current.x, y1: svgStartRef.current.y, x2: x, y2: y });
-          const { profile, axisStart, axisEnd } = extractBoxProfile(image, shape, startDet, endDet, boxIntegAxis);
+          const { profile, axisStart, axisEnd, box } = extractBoxProfile(image, shape, startDet, endDet, boxIntegAxis);
           setCommittedBox({ detStart: startDet, detEnd: endDet });
-          onBoxDrawn?.(profile, axisStart, axisEnd, boxIntegAxis);
+          onBoxDrawn?.(profile, axisStart, axisEnd, boxIntegAxis, box);
         }
       }
     },

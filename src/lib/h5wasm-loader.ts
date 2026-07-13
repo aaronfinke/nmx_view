@@ -587,3 +587,36 @@ export function readLauetofSingleSlice(
 
   return { image, shape: [rows, cols], totalEvents };
 }
+
+/**
+ * Integrated-counts-vs-TOF profile for a rectangular region of an NXlauetof panel.
+ * Reads the sub-volume data[r0..r1, c0..c1, :] and sums over pixels for each
+ * TOF bin. TOF is the fastest-varying (last) dimension, so a flat index k maps
+ * to bin `k % numBins`. Returns counts aligned with the panel's tofBins.
+ */
+export function readLauetofBoxTofProfile(
+  h5file: H5File,
+  panelPath: string,
+  box: { r0: number; r1: number; c0: number; c1: number }
+): Float64Array {
+  const panelGroup = h5file.get(panelPath) as H5Group;
+  const result = findLauetofDatasets(h5file, panelPath, panelGroup);
+  if (!result) throw new Error(`No 3D data found in ${panelPath}`);
+  const { dataDs } = result;
+  const [rows, cols, numBins] = dataDs.shape!;
+
+  const r0 = Math.max(0, Math.min(rows - 1, Math.round(Math.min(box.r0, box.r1))));
+  const r1 = Math.max(0, Math.min(rows - 1, Math.round(Math.max(box.r0, box.r1))));
+  const c0 = Math.max(0, Math.min(cols - 1, Math.round(Math.min(box.c0, box.c1))));
+  const c1 = Math.max(0, Math.min(cols - 1, Math.round(Math.max(box.c0, box.c1))));
+
+  const counts = new Float64Array(numBins);
+  const raw = dataDs.slice([[r0, r1 + 1], [c0, c1 + 1], [0, numBins]]);
+  if (raw instanceof BigUint64Array || raw instanceof BigInt64Array) {
+    for (let k = 0; k < raw.length; k++) counts[k % numBins] += Number(raw[k]);
+  } else if (ArrayBuffer.isView(raw)) {
+    const arr = raw as ArrayLike<number>;
+    for (let k = 0; k < arr.length; k++) counts[k % numBins] += arr[k];
+  }
+  return counts;
+}

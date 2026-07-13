@@ -22,6 +22,8 @@ interface LineScanPlotProps {
   lineLength: number;
   /** Height in px to match the adjacent detector panel */
   height: number;
+  /** Outer width in px (resizable); defaults to LINE_SCAN_PLOT_WIDTH */
+  width?: number;
   onClear: () => void;
   title?: string;
   xAxisLabel?: string;
@@ -33,6 +35,7 @@ export const LineScanPlot: React.FC<LineScanPlotProps> = ({
   profile,
   lineLength,
   height,
+  width = LINE_SCAN_PLOT_WIDTH,
   onClear,
   title = "Line Profile",
   xAxisLabel = "Position (px)",
@@ -40,7 +43,9 @@ export const LineScanPlot: React.FC<LineScanPlotProps> = ({
 }) => {
   const HEADER_H = 32;
   const svgH = height - HEADER_H;
-  const plotW = LINE_SCAN_PLOT_WIDTH - PAD.left - PAD.right;
+  // Inner drawing width — subtract the panel's left border + padding.
+  const innerW = width - 12;
+  const plotW = innerW - PAD.left - PAD.right;
   const plotH = Math.max(svgH - PAD.top - PAD.bottom, 60);
 
   const [peaks, setPeaks] = useState<AnnotatedPeak[] | null>(null);
@@ -138,7 +143,7 @@ export const LineScanPlot: React.FC<LineScanPlotProps> = ({
     PAD.left + ((detX - xOffset) / Math.max(lineLength, 1)) * plotW;
 
   return (
-    <div className="line-scan-plot">
+    <div className="line-scan-plot" style={{ width, boxSizing: "border-box" }}>
       <div className="line-scan-plot-header">
         <span className="line-scan-plot-title">{title}</span>
         <div className="line-scan-plot-actions">
@@ -160,7 +165,7 @@ export const LineScanPlot: React.FC<LineScanPlotProps> = ({
       ) : (
         <>
           <svg
-            width={LINE_SCAN_PLOT_WIDTH}
+            width={innerW}
             height={svgH}
             style={{ overflow: "visible", display: "block" }}
           >

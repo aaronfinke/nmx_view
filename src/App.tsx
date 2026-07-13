@@ -7,6 +7,7 @@ import { FileLoader } from "./components/FileLoader";
 import { DetectorImage } from "./components/DetectorImage";
 import { TofRangeSlider } from "./components/TofRangeSlider";
 import { LineScanPlot, LINE_SCAN_PLOT_WIDTH } from "./components/LineScanPlot";
+import { TofProfilePlot } from "./components/TofProfilePlot";
 import {
   openFile,
   detectFileType,
@@ -14,6 +15,7 @@ import {
   readEventData,
   findLauetofPanels,
   readLauetofSingleSlice,
+  readLauetofBoxTofProfile,
   type NexusFileType,
   type DetectorPanelInfo,
   type LauetofPanelInfo,
@@ -22,7 +24,9 @@ import {
 import {
   computeTofHistogram,
   computeDetectorImage,
+  computeBoxTofProfile,
   type DetectorImageResult,
+  type BoxRegion,
 } from "./lib/event-data";
 import type { File as H5File } from "h5wasm";
 import "./App.css";
@@ -31,6 +35,12 @@ import "./App.css";
 const CHROME_HEIGHT = 160;
 /** Width reserved for the shared color bar + domain inputs */
 const COLORBAR_WIDTH = 80;
+/** Draggable divider width between the detector and the analysis column */
+const RESIZER_WIDTH = 8;
+/** Smallest the analysis (Box / TOF) column may be dragged */
+const MIN_ANALYSIS_WIDTH = 260;
+/** Room reserved inside the column for its vertical scrollbar, so plots never clip */
+const ANALYSIS_GUTTER = 18;
 
 function useChartSize(panelCount: number, isOverview: boolean, extraWidthReserve = 0) {
   const compute = () => {
@@ -109,6 +119,11 @@ function App() {
   const [boxColEnd, setBoxColEnd] = useState(0);
   const [boxAxis, setBoxAxis] = useState<"slow" | "fast">("slow");
   const [clearLineSignal, setClearLineSignal] = useState(0);
+  // Integrated-counts-vs-TOF profile for the selected box (single-panel only)
+  const [tofProfile, setTofProfile] = useState<{ tof: Float64Array; counts: Float64Array } | null>(null);
+  const [tofRoi, setTofRoi] = useState<[number, number] | null>(null);
+  // User-resizable width of the analysis (Box / TOF profile) column.
+  const [analysisWidth, setAnalysisWidth] = useState(LINE_SCAN_PLOT_WIDTH);
 
   const hasPanels =
     fileType === "NXlauetof" ? lauetofPanels.length > 0 : panels.length > 0;
@@ -149,19 +164,41 @@ function App() {
   const activePanelCount = fileType === "NXlauetof" ? lauetofPanels.length : panels.length;
   const isOverview = viewMode === "overview";
   const displayPanelCount = viewMode === "overview" ? activePanelCount : 1;
-  // Reserve space for the line scan plot in single-panel mode.
-  const lineScanReserve = isOverview ? 0 : LINE_SCAN_PLOT_WIDTH + 8;
+  // Reserve space for the resizable analysis column in single-panel mode
+  // (column width + divider + inter-panel gaps).
+  const lineScanReserve = isOverview ? 0 : analysisWidth + RESIZER_WIDTH + 24;
   const chartSize = useChartSize(displayPanelCount, isOverview, lineScanReserve);
 
   // Clear line scan state whenever the user switches view mode.
   useEffect(() => {
     setLineScanProfile(null);
     setClearLineSignal((s) => s + 1);
+    boxRegionRef.current = null;
+    setTofProfile(null);
+    setTofRoi(null);
   }, [viewMode]);
+
+  // Keep the TOF-profile ROI in sync with the bottom TOF slider. Fires only on
+  // slider changes (tofRange), not when a fresh box resets the ROI to full range.
+  useEffect(() => {
+    if (!tofProfile) return;
+    const lo = tofProfile.tof[0];
+    const hi = tofProfile.tof[tofProfile.tof.length - 1];
+    setTofRoi([
+      Math.max(lo, Math.min(hi, tofRange[0])),
+      Math.max(lo, Math.min(hi, tofRange[1])),
+    ]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tofRange]);
 
   const h5fileRef = useRef<H5File | null>(null);
   const eventDataRef = useRef<Map<number, EventData>>(new Map());
   const browserFileRef = useRef<File | null>(null);
+  // Last box region a TOF profile was computed for — avoids recomputing when
+  // onBoxDrawn re-fires only because the underlying image changed.
+  const boxRegionRef = useRef<BoxRegion | null>(null);
+  // Active drag origin for the analysis-column resizer.
+  const resizeStartRef = useRef<{ x: number; w: number } | null>(null);
   const recomputeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const recomputeRunIdRef = useRef(0);
 
@@ -529,25 +566,101 @@ function App() {
       setLineScanProfile(profile);
       setLineScanLength(Math.round(lengthPx));
       setBoxProfile(null);
+      // A line replaces the box — drop its TOF profile.
+      boxRegionRef.current = null;
+      setTofProfile(null);
+      setTofRoi(null);
     },
     []
   );
 
+  /** Compute the integrated-counts-vs-TOF profile for the current box region. */
+  const computeBoxTof = useCallback(
+    (box: BoxRegion) => {
+      try {
+        if (typeof viewMode !== "number") return;
+        if (fileType === "NXlauetof" && h5fileRef.current) {
+          const panel = lauetofPanels[viewMode];
+          if (!panel) return;
+          const counts = readLauetofBoxTofProfile(h5fileRef.current, panel.path, box);
+          setTofProfile({ tof: panel.tofBins, counts });
+          setTofRoi([panel.tofBins[0], panel.tofBins[panel.tofBins.length - 1]]);
+        } else {
+          const ed = eventDataRef.current.get(viewMode);
+          if (!ed) return;
+          const { tof, counts } = computeBoxTofProfile(ed, box, 256);
+          setTofProfile({ tof, counts });
+          setTofRoi([tof[0], tof[tof.length - 1]]);
+        }
+      } catch (err) {
+        console.error("TOF profile error:", err);
+        setTofProfile(null);
+        setTofRoi(null);
+      }
+    },
+    [fileType, viewMode, lauetofPanels]
+  );
+
   const handleBoxDrawn = useCallback(
-    (profile: number[], axisStart: number, axisEnd: number, axis: "slow" | "fast") => {
+    (
+      profile: number[],
+      axisStart: number,
+      axisEnd: number,
+      axis: "slow" | "fast",
+      box: BoxRegion
+    ) => {
       setBoxProfile(profile);
       setBoxColStart(axisStart);
       setBoxColEnd(axisEnd);
       setBoxAxis(axis);
       setLineScanProfile(null);
+      // Recompute the TOF profile only when the box region itself changes,
+      // not when onBoxDrawn re-fires because the displayed image changed.
+      const prev = boxRegionRef.current;
+      const changed =
+        !prev || prev.r0 !== box.r0 || prev.r1 !== box.r1 ||
+        prev.c0 !== box.c0 || prev.c1 !== box.c1;
+      if (changed) {
+        boxRegionRef.current = box;
+        computeBoxTof(box);
+      }
     },
-    []
+    [computeBoxTof]
   );
 
   const handleLineScanClear = useCallback(() => {
     setLineScanProfile(null);
     setBoxProfile(null);
     setClearLineSignal((s) => s + 1);
+    boxRegionRef.current = null;
+    setTofProfile(null);
+    setTofRoi(null);
+  }, []);
+
+  // ── Analysis-column resizer ─────────────────────────────────
+  const handleResizerDown = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      e.preventDefault();
+      resizeStartRef.current = { x: e.clientX, w: analysisWidth };
+      e.currentTarget.setPointerCapture(e.pointerId);
+    },
+    [analysisWidth]
+  );
+
+  const handleResizerMove = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    const s = resizeStartRef.current;
+    if (!s) return;
+    // Dragging left widens the analysis column (and shrinks the detector).
+    const delta = s.x - e.clientX;
+    const maxW = Math.max(MIN_ANALYSIS_WIDTH, window.innerWidth - 460);
+    setAnalysisWidth(Math.min(maxW, Math.max(MIN_ANALYSIS_WIDTH, s.w + delta)));
+  }, []);
+
+  const handleResizerUp = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    resizeStartRef.current = null;
+    if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+      e.currentTarget.releasePointerCapture(e.pointerId);
+    }
   }, []);
 
   // Show file loader during initial load (no panels yet) or while loading without images
@@ -591,6 +704,12 @@ function App() {
               setDomainMin("");
               setDomainMax("");
               setStatus("");
+              setViewMode("overview");
+              setLineScanProfile(null);
+              setBoxProfile(null);
+              boxRegionRef.current = null;
+              setTofProfile(null);
+              setTofRoi(null);
             }}
             title="Load a different file"
           >
@@ -728,17 +847,48 @@ function App() {
                   Auto
                 </button>
               </div>
-              {/* Profile plot — line scan or box integration, single-panel mode only */}
+              {/* Draggable divider — resize the detector vs. the analysis column */}
               {!isOverview && (
-                <LineScanPlot
-                  profile={boxProfile ?? lineScanProfile}
-                  lineLength={boxProfile ? boxColEnd - boxColStart : lineScanLength}
-                  height={Math.round((chartSize + 36) / 2)}
-                  onClear={handleLineScanClear}
-                  title={boxProfile ? "Box Profile" : "Line Profile"}
-                  xAxisLabel={boxProfile ? (boxAxis === "slow" ? "Fast Axis (px)" : "Row (px)") : "Slow Axis (px)"}
-                  xOffset={boxProfile ? boxColStart : 0}
+                <div
+                  className="panel-resizer"
+                  style={{ width: RESIZER_WIDTH, height: chartSize }}
+                  onPointerDown={handleResizerDown}
+                  onPointerMove={handleResizerMove}
+                  onPointerUp={handleResizerUp}
+                  onPointerCancel={handleResizerUp}
+                  title="Drag to resize panels"
+                  role="separator"
+                  aria-orientation="vertical"
                 />
+              )}
+              {/* Profile plots — line scan / box integration, plus box TOF profile.
+                  Single-panel mode only. */}
+              {!isOverview && (
+                <div className="analysis-column" style={{ width: analysisWidth, maxHeight: chartSize + 36 }}>
+                  <LineScanPlot
+                    profile={boxProfile ?? lineScanProfile}
+                    lineLength={boxProfile ? boxColEnd - boxColStart : lineScanLength}
+                    height={Math.round((chartSize + 36) / 2)}
+                    width={analysisWidth - ANALYSIS_GUTTER}
+                    onClear={handleLineScanClear}
+                    title={boxProfile ? "Box Profile" : "Line Profile"}
+                    xAxisLabel={boxProfile ? (boxAxis === "slow" ? "Fast Axis (px)" : "Row (px)") : "Slow Axis (px)"}
+                    xOffset={boxProfile ? boxColStart : 0}
+                  />
+                  {boxProfile && (
+                    <TofProfilePlot
+                      tof={tofProfile?.tof ?? null}
+                      counts={tofProfile?.counts ?? null}
+                      height={Math.round((chartSize + 36) / 2)}
+                      width={analysisWidth - ANALYSIS_GUTTER}
+                      roi={tofRoi}
+                      onRoiChange={setTofRoi}
+                      onApply={handleTofRangeChange}
+                      onClear={handleLineScanClear}
+                      unit={tofUnit}
+                    />
+                  )}
+                </div>
               )}
             </div>
           </>
