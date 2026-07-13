@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, useEffect, useMemo } from "react";
+import { useState, useCallback, useRef, useEffect, useMemo, useLayoutEffect } from "react";
 import "@h5web/lib/dist/styles.css";
 import { ScaleType } from "@h5web/lib";
 import { ColorBar } from "./components/ViridisColorBar";
@@ -164,6 +164,30 @@ function App() {
   const browserFileRef = useRef<File | null>(null);
   const recomputeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const recomputeRunIdRef = useRef(0);
+
+  const newFileBtnRef = useRef<HTMLButtonElement>(null);
+  const reloadBtnRef = useRef<HTMLButtonElement>(null);
+  const viewSelectRef = useRef<HTMLSelectElement>(null);
+  const colorMapSelectRef = useRef<HTMLSelectElement>(null);
+  const colorBarRef = useRef<HTMLDivElement>(null);
+  const tofDockRef = useRef<HTMLDivElement>(null);
+  const lineScanPlotRef = useRef<HTMLDivElement>(null);
+  const lineScanAnalysisRef = useRef<HTMLDivElement>(null);
+  const [helpRects, setHelpRects] = useState<Record<string, DOMRect>>({});
+
+  useLayoutEffect(() => {
+    if (!showHelp) return;
+    const rects: Record<string, DOMRect> = {};
+    if (newFileBtnRef.current) rects.newFile = newFileBtnRef.current.getBoundingClientRect();
+    if (reloadBtnRef.current) rects.reload = reloadBtnRef.current.getBoundingClientRect();
+    if (viewSelectRef.current) rects.viewSelect = viewSelectRef.current.getBoundingClientRect();
+    if (colorMapSelectRef.current) rects.colorMap = colorMapSelectRef.current.getBoundingClientRect();
+    if (colorBarRef.current) rects.colorBar = colorBarRef.current.getBoundingClientRect();
+    if (tofDockRef.current) rects.tofDock = tofDockRef.current.getBoundingClientRect();
+    if (lineScanPlotRef.current) rects.lineScanPlot = lineScanPlotRef.current.getBoundingClientRect();
+    if (lineScanAnalysisRef.current) rects.lineScanAnalysis = lineScanAnalysisRef.current.getBoundingClientRect();
+    setHelpRects(rects);
+  }, [showHelp]);
 
   const clearRecomputeTimer = useCallback(() => {
     if (recomputeTimerRef.current) {
@@ -572,6 +596,7 @@ function App() {
         {fileName && <span className="file-name-badge">{fileName}</span>}
         <div className="controls">
           <button
+            ref={newFileBtnRef}
             className="reload-btn"
             onClick={() => {
               if (h5fileRef.current) {
@@ -597,6 +622,7 @@ function App() {
             &#x1F4C2; New File
           </button>
           <button
+            ref={reloadBtnRef}
             className="reload-btn"
             onClick={handleReload}
             disabled={loading}
@@ -607,6 +633,7 @@ function App() {
           <div className="control-group">
             <label>View:</label>
             <select
+              ref={viewSelectRef}
               value={viewMode === "overview" ? "overview" : String(viewMode)}
               onChange={(e) => {
                 const v = e.target.value;
@@ -637,6 +664,7 @@ function App() {
           <div className="control-group">
             <label>Color map:</label>
             <select
+              ref={colorMapSelectRef}
               value={colorMap}
               onChange={(e) => setColorMap(e.target.value as ColorMap | "Greys_r")}
             >
@@ -698,6 +726,7 @@ function App() {
                   })}
               </div>
               <div
+                ref={colorBarRef}
                 className={`shared-colorbar ${isOverview ? "shared-colorbar-overview" : "shared-colorbar-single"}`}
                 style={isOverview ? undefined : { height: chartSize }}
               >
@@ -738,6 +767,8 @@ function App() {
                   title={boxProfile ? "Box Profile" : "Line Profile"}
                   xAxisLabel={boxProfile ? (boxAxis === "slow" ? "Fast Axis (px)" : "Row (px)") : "Slow Axis (px)"}
                   xOffset={boxProfile ? boxColStart : 0}
+                  outerRef={lineScanPlotRef}
+                  analysisRef={lineScanAnalysisRef}
                 />
               )}
             </div>
@@ -746,7 +777,7 @@ function App() {
       </main>
 
       {detectorImages.length > 0 && (
-        <div className="tof-dock">
+        <div ref={tofDockRef} className="tof-dock">
           <TofRangeSlider
             tofMin={tofAbsMin}
             tofMax={tofAbsMax}
@@ -780,46 +811,99 @@ function App() {
 
       <div className="status-bar">{status}</div>
 
-      {showHelp && (
-        <div className="help-overlay" onClick={() => setShowHelp(false)}>
-          <div className="help-modal" onClick={(e) => e.stopPropagation()}>
-            <button className="help-close" onClick={() => setShowHelp(false)}>✕</button>
-            <h2>NMX Event Data Viewer — Help</h2>
-            <h3>Loading Data</h3>
-            <ul>
-              <li>Drag & drop an HDF5/NeXus file onto the drop zone, or click to browse</li>
-              <li>Supported formats: <strong>NXevent_data</strong> (raw events) and <strong>NXLaueTOF</strong> (pre-binned)</li>
-              <li>Use <strong>↻ Reload</strong> to re-read the file (useful for SWMR live data)</li>
-              <li>Use <strong>📂 New File</strong> to load a different file</li>
-            </ul>
-            <h3>TOF Slider</h3>
-            <ul>
-              <li>Drag the two thumbs to set a TOF range for filtering events</li>
-              <li>Enable <strong>Window</strong> mode to lock the range width and slide it as a unit</li>
-              <li>Press <strong>← / →</strong> arrow keys to step by one current-slice width</li>
-              <li>For NXLaueTOF files, the slider snaps to TOF bin centers</li>
-            </ul>
-            <h3>Views</h3>
-            <ul>
-              <li><strong>Overview</strong>: all detector panels in a vertically scrollable grid</li>
-              <li><strong>Single panel</strong>: select a panel from the View dropdown for a larger view with zoom</li>
-            </ul>
-            <h3>Toolbar (Single Panel View)</h3>
-            <p>The vertical toolbar to the left of the image switches between two modes:</p>
-            <ul>
-              <li><strong>🔍 Zoom mode</strong> (<kbd>Z</kbd>) — click &amp; drag to draw a selection box and zoom in; <strong>Shift&nbsp;+&nbsp;drag</strong> to pan; <kbd>Esc</kbd> resets zoom</li>
-              <li><strong>Line Scan mode</strong> (<kbd>L</kbd>) — click to set the start point, then click again to set the end point; a 1D intensity profile is plotted to the right; <kbd>Esc</kbd> cancels a line in progress</li>
-            </ul>
-            <h3>Color Scale</h3>
-            <ul>
-              <li>Choose scale type (Linear, Log, SymLog, Sqrt) from the dropdown</li>
-              <li>Type values in the <strong>Min / Max</strong> inputs on the color bar to override the range</li>
-              <li>Click <strong>Auto</strong> to reset to the optimal range (µ&nbsp;+&nbsp;2σ outlier rejection)</li>
-            </ul>
-            <p className="help-shortcut">Press <kbd>H</kbd> to toggle this help</p>
+      {showHelp && (() => {
+        type CalloutAlign = "center" | "left" | "right";
+        const callouts: Array<{ id: string; text: string; dir: "below" | "above" | "left"; wide?: boolean; align?: CalloutAlign }> = [
+          {
+            id: "viewSelect",
+            text: isOverview
+              ? "Overview mode — all panels in a grid. Pick a panel name to enter single-panel view with zoom & analysis."
+              : "Single-panel view — zoom, line scan & box tools available. Choose Overview to see all panels.",
+            dir: "below",
+            wide: true,
+            align: "right",
+          },
+          { id: "colorMap", text: "Change colormap for all panels (Viridis / Inferno / Greys)", dir: "below", align: "left" },
+          ...(detectorImages.length > 0 ? [
+            { id: "colorBar", text: "Override display range — type min/max, or click Auto for µ+2σ auto-range", dir: "left" as const, wide: true },
+            {
+              id: "tofDock",
+              text: fileType === "NXlauetof"
+                ? "TOF slider — snaps to bin centers. Use ← → to step one bin."
+                : "Filter events by time-of-flight range. Enable Window mode to slide a fixed-width window. Use ← → to step.",
+              dir: "above" as const,
+              wide: true,
+            },
+          ] : []),
+          ...(!isOverview ? [
+            { id: "lineScanPlot", text: "Draw a line (L) or box (B) on the detector image to plot a 1D profile. Click Analyze to detect peaks — centroid, width, integral, and Poisson SNR.", dir: "below" as const, wide: true, align: "right" as const },
+          ] : []),
+        ];
+        return (
+          <div className="help-visual-overlay" onClick={() => setShowHelp(false)}>
+            <div className="help-kb-panel" onClick={(e) => e.stopPropagation()}>
+              <div className="help-kb-title">Keyboard Shortcuts</div>
+              <div className="help-kb-list">
+                <div className="help-kb-item"><kbd>H</kbd><span>Toggle help</span></div>
+                <div className="help-kb-item"><kbd>Esc</kbd><span>Close / cancel / reset zoom</span></div>
+                {detectorImages.length > 0 && (
+                  <>
+                    <div className="help-kb-section">TOF Navigation</div>
+                    <div className="help-kb-item">
+                      <span className="help-kb-keys"><kbd>←</kbd><kbd>→</kbd></span>
+                      <span>Step TOF window by bin width</span>
+                    </div>
+                  </>
+                )}
+                {!isOverview && (
+                  <>
+                    <div className="help-kb-section">Drawing Tools</div>
+                    <div className="help-kb-item"><kbd>Z</kbd><span>Zoom (drag to zoom in)</span></div>
+                    <div className="help-kb-item"><kbd>L</kbd><span>Line scan (two clicks)</span></div>
+                    <div className="help-kb-item"><kbd>B</kbd><span>Box integration</span></div>
+                    <div className="help-kb-item">
+                      <span className="help-kb-keys"><kbd>⇧</kbd>+drag</span>
+                      <span>Pan (in zoom mode)</span>
+                    </div>
+                  </>
+                )}
+              </div>
+              <div className="help-kb-dismiss">Click anywhere to close</div>
+            </div>
+            {callouts.map(({ id }) => {
+              const rect = helpRects[id];
+              if (!rect) return null;
+              return (
+                <div
+                  key={`ring-${id}`}
+                  className="help-highlight-ring"
+                  style={{ top: rect.top - 4, left: rect.left - 4, width: rect.width + 8, height: rect.height + 8 }}
+                />
+              );
+            })}
+            {callouts.map(({ id, text, dir, wide, align = "center" }) => {
+              const rect = helpRects[id];
+              if (!rect) return null;
+              const calloutW = wide ? 300 : 210;
+              const arrowX = align === "left"  ? `${(rect.width + 8) / 2}px`
+                           : align === "right" ? `${calloutW - (rect.width + 8) / 2}px`
+                           : "50%";
+              const alignClass = align !== "center" ? ` help-callout-align-${align}` : "";
+              return (
+                <div
+                  key={`callout-${id}`}
+                  style={{ position: "fixed", top: rect.top - 4, left: rect.left - 4, width: rect.width + 8, height: rect.height + 8, zIndex: 1002, pointerEvents: "none" }}
+                >
+                  <div
+                    className={`help-callout help-callout-${dir}${alignClass}`}
+                    style={{ width: calloutW, "--help-arrow-x": arrowX } as React.CSSProperties}
+                  >{text}</div>
+                </div>
+              );
+            })}
           </div>
-        </div>
-      )}
+        );
+      })()}
     </div>
   );
 }
