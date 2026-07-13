@@ -2,6 +2,7 @@ import React, { useCallback } from "react";
 
 interface FileLoaderProps {
   onFileLoaded: (file: File) => void;
+  onLoadDemo?: () => void;
   loading: boolean;
   progress?: number;
   progressLabel?: string;
@@ -9,6 +10,7 @@ interface FileLoaderProps {
 
 export const FileLoader: React.FC<FileLoaderProps> = ({
   onFileLoaded,
+  onLoadDemo,
   loading,
   progress = 0,
   progressLabel = "",
@@ -76,6 +78,14 @@ export const FileLoader: React.FC<FileLoaderProps> = ({
                 />
               </label>
             </div>
+            {onLoadDemo && (
+              <p className="demo-hint">
+                No data of your own?{" "}
+                <button type="button" className="demo-link-btn" onClick={onLoadDemo}>
+                  Load a demo dataset
+                </button>
+              </p>
+            )}
           </>
         )}
         <p className="github-link">

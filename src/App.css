@@ -628,6 +628,27 @@
   background: #003366;
 }
 
+.demo-hint {
+  margin-top: 1rem;
+  font-size: 0.9rem;
+  color: rgba(0, 51, 102, 0.7);
+}
+
+.demo-link-btn {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  font-weight: 600;
+  color: #0099DC;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.demo-link-btn:hover {
+  color: #003366;
+}
+
 .github-link {
   margin-top: 1rem;
   font-size: 0.8rem;

@@ -32,6 +32,10 @@ const CHROME_HEIGHT = 160;
 /** Width reserved for the shared color bar + domain inputs */
 const COLORBAR_WIDTH = 80;
 
+/** Demo dataset served from public/ so users without their own data can try the app */
+const DEMO_FILE_NAME = "nmx-demo.h5";
+const DEMO_FILE_URL_PATH = `demo/${DEMO_FILE_NAME}`;
+
 function useChartSize(panelCount: number, isOverview: boolean, extraWidthReserve = 0) {
   const compute = () => {
     const gap = 8;
@@ -386,6 +390,54 @@ function App() {
     [loadAllPanels, loadAllLauetofPanels]
   );
 
+  /** Fetch the bundled demo dataset (streaming download progress) and load it */
+  const handleLoadDemo = useCallback(async () => {
+    setLoading(true);
+    setStatus("Downloading demo dataset…");
+    setLoadProgress(0);
+    setLoadProgressLabel("Downloading demo dataset…");
+    try {
+      const base = import.meta.env.BASE_URL || "/";
+      const resp = await fetch(`${base}${DEMO_FILE_URL_PATH}`);
+      if (!resp.ok) throw new Error(`HTTP ${resp.status} fetching demo dataset`);
+
+      const total = Number(resp.headers.get("Content-Length")) || 0;
+      const reader = resp.body?.getReader();
+      let file: File;
+      if (reader) {
+        const chunks: Uint8Array[] = [];
+        let received = 0;
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          if (!value) continue;
+          chunks.push(value);
+          received += value.length;
+          const mb = (received / 1e6).toFixed(0);
+          if (total) {
+            // Reserve the last 10% of the bar for h5wasm parsing in handleFileLoaded
+            setLoadProgress((received / total) * 90);
+            setLoadProgressLabel(
+              `Downloading demo dataset… ${mb} / ${(total / 1e6).toFixed(0)} MB`
+            );
+          } else {
+            setLoadProgressLabel(`Downloading demo dataset… ${mb} MB`);
+          }
+        }
+        file = new File(chunks as BlobPart[], DEMO_FILE_NAME);
+      } else {
+        const blob = await resp.blob();
+        file = new File([blob], DEMO_FILE_NAME);
+      }
+
+      await handleFileLoaded(file);
+    } catch (err) {
+      setStatus(`Demo load error: ${(err as Error).message}`);
+      console.error(err);
+      setLoading(false);
+    }
+  }, [handleFileLoaded]);
+
   const handleReload = useCallback(async () => {
     if (!browserFileRef.current) return;
     setLoading(true);
@@ -580,6 +632,7 @@ function App() {
       <div className="app" data-filetype={fileType}>
         <FileLoader
           onFileLoaded={handleFileLoaded}
+          onLoadDemo={handleLoadDemo}
           loading={loading}
           progress={loadProgress}
           progressLabel={loadProgressLabel}
