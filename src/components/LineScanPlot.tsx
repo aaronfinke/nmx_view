@@ -29,6 +29,8 @@ interface LineScanPlotProps {
   xAxisLabel?: string;
   /** Value added to x-tick labels (e.g. first column index for box profiles) */
   xOffset?: number;
+  outerRef?: React.RefObject<HTMLDivElement>;
+  analysisRef?: React.RefObject<HTMLDivElement>;
 }
 
 export const LineScanPlot: React.FC<LineScanPlotProps> = ({
@@ -40,6 +42,8 @@ export const LineScanPlot: React.FC<LineScanPlotProps> = ({
   title = "Line Profile",
   xAxisLabel = "Position (px)",
   xOffset = 0,
+  outerRef,
+  analysisRef,
 }) => {
   const HEADER_H = 32;
   const svgH = height - HEADER_H;
@@ -143,7 +147,7 @@ export const LineScanPlot: React.FC<LineScanPlotProps> = ({
     PAD.left + ((detX - xOffset) / Math.max(lineLength, 1)) * plotW;
 
   return (
-    <div className="line-scan-plot" style={{ width, boxSizing: "border-box" }}>
+    <div className="line-scan-plot" ref={outerRef} style={{ width, boxSizing: "border-box" }}>
       <div className="line-scan-plot-header">
         <span className="line-scan-plot-title">{title}</span>
         <div className="line-scan-plot-actions">
@@ -232,7 +236,7 @@ export const LineScanPlot: React.FC<LineScanPlotProps> = ({
 
           {/* Analysis results table */}
           {peaks && (
-            <div className="peak-analysis">
+            <div className="peak-analysis" ref={analysisRef}>
               {peaks.length === 0 ? (
                 <p className="peak-analysis-empty">No peaks found</p>
               ) : (

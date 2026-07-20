@@ -2,6 +2,7 @@ import React, { useCallback } from "react";
 
 interface FileLoaderProps {
   onFileLoaded: (file: File) => void;
+  onLoadDemo?: () => void;
   loading: boolean;
   progress?: number;
   progressLabel?: string;
@@ -9,6 +10,7 @@ interface FileLoaderProps {
 
 export const FileLoader: React.FC<FileLoaderProps> = ({
   onFileLoaded,
+  onLoadDemo,
   loading,
   progress = 0,
   progressLabel = "",
@@ -44,10 +46,12 @@ export const FileLoader: React.FC<FileLoaderProps> = ({
     >
       <div className="file-loader-content">
         <h2>NMX Event Data Viewer</h2>
-        <p>Load an HDF5/NeXus file containing NXevent_data</p>
-        <p>Uses <a href="https://h5web.panosc.eu">h5web</a> to load and process data.</p>
-        <p>All processing happens locally in the browser: no remote loading of data!</p>
-        <p>Do you just need to view the file data without visualization? Use <a href="https://myhdf5.hdfgroup.org">myHDF5</a>.</p>
+        <p>A Web-based app for viewing NeXus event data, with TOF slicing and analysis tools.</p>
+        <p>Load an HDF5/NeXus file containing <a href="https://manual.nexusformat.org/classes/base_classes/NXevent_data.html">NXevent_data</a>.<br />
+         Pre-binned <a href="https://manual.nexusformat.org/classes/applications/NXlauetof.html#nxlauetof">NXLaueTOF</a> files are also supported.</p>
+        <p>All processing happens locally in the browser with <a href="https://h5web.panosc.eu">h5web</a>:<br /> 
+          no remote loading of data!</p>
+        <p>Use <a href="https://myhdf5.hdfgroup.org">myHDF5</a> if you need a web-based app for viewing HDF5 data without advanced TOF visualization.</p>
         {loading ? (
           <div className="loading-progress">
             <div className="progress-bar-container">
@@ -74,9 +78,23 @@ export const FileLoader: React.FC<FileLoaderProps> = ({
                 />
               </label>
             </div>
+            {onLoadDemo && (
+              <p className="demo-hint">
+                No data of your own?{" "}
+                <button type="button" className="demo-link-btn" onClick={onLoadDemo}>
+                  Load a demo dataset
+                </button>
+              </p>
+            )}
           </>
         )}
+        <p className="github-link">
+          <a href="https://github.com/aaronfinke/nmx_view" target="_blank" rel="noopener noreferrer">
+            GitHub
+          </a>
+        </p>
       </div>
     </div>
+    
   );
 };
