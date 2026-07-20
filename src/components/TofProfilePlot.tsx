@@ -1,4 +1,4 @@
-import React, { useMemo, useRef, useCallback } from "react";
+import React, { useMemo, useRef, useCallback, useState, useEffect, useId } from "react";
 
 export const TOF_PROFILE_PLOT_WIDTH = 320;
 
@@ -19,8 +19,13 @@ interface TofProfilePlotProps {
   onRoiChange: (roi: [number, number]) => void;
   /** Called when the user applies the ROI to the detector image (ns) */
   onApply: (roi: [number, number]) => void;
-  /** Clear the box selection entirely */
-  onClear: () => void;
+  /**
+   * Re-bin request over a TOF window (null = full). Used when `rebinOnZoom` is
+   * set (raw events) so zooming recomputes the histogram at finer resolution.
+   */
+  onZoom?: (range: [number, number] | null) => void;
+  /** True when the profile can be re-binned on zoom (raw events, not NXlauetof) */
+  rebinOnZoom?: boolean;
   /** Display unit for the TOF axis ("µs" | "ms" | "ns") */
   unit?: string;
 }
@@ -33,7 +38,8 @@ export const TofProfilePlot: React.FC<TofProfilePlotProps> = ({
   roi,
   onRoiChange,
   onApply,
-  onClear,
+  onZoom,
+  rebinOnZoom = false,
   unit = "µs",
 }) => {
   const HEADER_H = 32;
@@ -46,22 +52,37 @@ export const TofProfilePlot: React.FC<TofProfilePlotProps> = ({
   const displayScale = unit === "µs" ? 1e-3 : unit === "ms" ? 1e-6 : 1;
 
   const svgRef = useRef<SVGSVGElement>(null);
-  // Which ROI handle is being dragged, if any.
-  const dragRef = useRef<"lo" | "hi" | null>(null);
+  // Drag mode: resize the low/high edge, translate the whole band, or idle.
+  const dragRef = useRef<"lo" | "hi" | "move" | null>(null);
+  // Anchor for a "move" drag: where the band was when the grab started.
+  const moveStartRef = useRef<{ grabTof: number; lo: number; hi: number } | null>(null);
+  const clipId = "tofclip-" + useId().replace(/:/g, "");
 
-  const [xMin, xMax] = useMemo(() => {
+  // Zoomed x-range; null = full TOF domain. Reset whenever a new box is drawn.
+  const [viewDomain, setViewDomain] = useState<[number, number] | null>(null);
+  useEffect(() => { setViewDomain(null); }, [tof]);
+
+  const [fullMin, fullMax] = useMemo<[number, number]>(() => {
     if (!tof || tof.length === 0) return [0, 1];
     return [tof[0], tof[tof.length - 1]];
   }, [tof]);
 
-  const maxVal = useMemo(
-    () => (counts && counts.length > 0 ? Math.max(...counts, 1) : 1),
-    [counts]
-  );
+  const xMin = viewDomain ? viewDomain[0] : fullMin;
+  const xMax = viewDomain ? viewDomain[1] : fullMax;
+
+  // Rescale the y-axis to the counts within the visible x-range.
+  const maxVal = useMemo(() => {
+    if (!tof || !counts) return 1;
+    let m = 1;
+    for (let i = 0; i < counts.length; i++) {
+      if (tof[i] >= xMin && tof[i] <= xMax && counts[i] > m) m = counts[i];
+    }
+    return m;
+  }, [tof, counts, xMin, xMax]);
 
   const effRoi = useMemo<[number, number]>(
-    () => roi ?? [xMin, xMax],
-    [roi, xMin, xMax]
+    () => roi ?? [fullMin, fullMax],
+    [roi, fullMin, fullMax]
   );
 
   // ── coordinate mapping ─────────────────────────────────────
@@ -111,31 +132,59 @@ export const TofProfilePlot: React.FC<TofProfilePlotProps> = ({
       if (!tof) return;
       const t = clientToTof(e.clientX);
       const [lo, hi] = effRoi;
-      // Grab the nearer handle.
-      dragRef.current = Math.abs(t - lo) <= Math.abs(t - hi) ? "lo" : "hi";
+      // Edge hit tolerance (~8px) expressed in TOF units.
+      const hitTof = (8 / Math.max(plotW, 1)) * (xMax - xMin);
       e.currentTarget.setPointerCapture(e.pointerId);
-      // Move the grabbed handle to the click position immediately.
-      const next: [number, number] = dragRef.current === "lo" ? [Math.min(t, hi), hi] : [lo, Math.max(t, lo)];
-      onRoiChange(next);
+
+      if (Math.abs(t - lo) <= hitTof) {
+        dragRef.current = "lo";
+      } else if (Math.abs(t - hi) <= hitTof) {
+        dragRef.current = "hi";
+      } else if (t > lo && t < hi) {
+        // Grabbed the middle of the band → translate it, preserving width.
+        dragRef.current = "move";
+        moveStartRef.current = { grabTof: t, lo, hi };
+      } else {
+        // Outside the band → grab the nearer edge and snap it to the click.
+        dragRef.current = Math.abs(t - lo) <= Math.abs(t - hi) ? "lo" : "hi";
+        onRoiChange(
+          dragRef.current === "lo" ? [Math.min(t, hi), hi] : [lo, Math.max(t, lo)]
+        );
+      }
     },
-    [tof, clientToTof, effRoi, onRoiChange]
+    [tof, clientToTof, effRoi, onRoiChange, plotW, xMin, xMax]
   );
 
   const handlePointerMove = useCallback(
     (e: React.PointerEvent<SVGSVGElement>) => {
       if (!dragRef.current || !tof) return;
       const t = clientToTof(e.clientX);
+
+      if (dragRef.current === "move") {
+        const s = moveStartRef.current;
+        if (!s) return;
+        const width = s.hi - s.lo;
+        let lo = s.lo + (t - s.grabTof);
+        let hi = s.hi + (t - s.grabTof);
+        // Keep the band within the visible range without changing its width.
+        if (lo < xMin) { lo = xMin; hi = xMin + width; }
+        if (hi > xMax) { hi = xMax; lo = xMax - width; }
+        onRoiChange([lo, hi]);
+        return;
+      }
+
       const [lo, hi] = effRoi;
-      const next: [number, number] =
-        dragRef.current === "lo" ? [Math.min(t, hi), hi] : [lo, Math.max(t, lo)];
-      onRoiChange(next);
+      onRoiChange(
+        dragRef.current === "lo" ? [Math.min(t, hi), hi] : [lo, Math.max(t, lo)]
+      );
     },
-    [tof, clientToTof, effRoi, onRoiChange]
+    [tof, clientToTof, effRoi, onRoiChange, xMin, xMax]
   );
 
   const endDrag = useCallback((e: React.PointerEvent<SVGSVGElement>) => {
     if (dragRef.current) {
       dragRef.current = null;
+      moveStartRef.current = null;
       if (e.currentTarget.hasPointerCapture(e.pointerId)) {
         e.currentTarget.releasePointerCapture(e.pointerId);
       }
@@ -161,8 +210,41 @@ export const TofProfilePlot: React.FC<TofProfilePlotProps> = ({
   }));
 
   const hasData = !!(tof && counts && counts.length > 1);
-  const roiLoX = tofToSvgX(effRoi[0]);
-  const roiHiX = tofToSvgX(effRoi[1]);
+  const clampPlotX = (x: number) =>
+    Math.max(PAD.left, Math.min(PAD.left + plotW, x));
+  const roiLoX = clampPlotX(tofToSvgX(effRoi[0]));
+  const roiHiX = clampPlotX(tofToSvgX(effRoi[1]));
+
+  // Zoom is available when the ROI is a strict sub-range of the current view.
+  const span = Math.max(xMax - xMin, 1e-9);
+  const canZoom =
+    hasData &&
+    effRoi[1] > effRoi[0] &&
+    (effRoi[0] > xMin + span * 1e-4 || effRoi[1] < xMax - span * 1e-4);
+
+  const handleZoom = () => {
+    if (!canZoom) return;
+    const range: [number, number] = [
+      Math.max(fullMin, effRoi[0]),
+      Math.min(fullMax, effRoi[1]),
+    ];
+    if (rebinOnZoom && onZoom) {
+      // Raw events: recompute the histogram over the zoom range (finer bins).
+      // The new profile spans `range`, so the local view stays "full".
+      onZoom(range);
+    } else {
+      // NXlauetof: fixed bins — just crop the view.
+      setViewDomain(range);
+    }
+  };
+  const handleReset = () => {
+    if (rebinOnZoom && onZoom) {
+      onZoom(null); // re-bins over the full range and resets the ROI in the parent
+    } else {
+      setViewDomain(null);
+      onRoiChange([fullMin, fullMax]);
+    }
+  };
 
   return (
     <div className="tof-profile-plot" style={{ width, boxSizing: "border-box" }}>
@@ -171,16 +253,30 @@ export const TofProfilePlot: React.FC<TofProfilePlotProps> = ({
         <div className="tof-profile-actions">
           {hasData && (
             <button
+              className="tof-profile-zoom-btn"
+              onClick={handleZoom}
+              disabled={!canZoom}
+              title="Zoom the TOF axis into the selected ROI"
+            >
+              Zoom
+            </button>
+          )}
+          {hasData && (
+            <button
               className="tof-profile-apply-btn"
               onClick={() => onApply(effRoi)}
               title="Set the detector image TOF range to this ROI"
             >
-              Apply to image
+              Apply
             </button>
           )}
           {hasData && (
-            <button className="tof-profile-clear-btn" onClick={onClear}>
-              Clear
+            <button
+              className="tof-profile-reset-btn"
+              onClick={handleReset}
+              title="Reset zoom and ROI to the full TOF profile"
+            >
+              Reset
             </button>
           )}
         </div>
@@ -202,6 +298,12 @@ export const TofProfilePlot: React.FC<TofProfilePlotProps> = ({
             onPointerUp={endDrag}
             onPointerCancel={endDrag}
           >
+            <defs>
+              <clipPath id={clipId}>
+                <rect x={PAD.left} y={PAD.top} width={plotW} height={plotH} />
+              </clipPath>
+            </defs>
+
             <rect x={PAD.left} y={PAD.top} width={plotW} height={plotH}
               fill="rgba(0,51,102,0.03)" stroke="rgba(0,51,102,0.2)" strokeWidth={1} />
 
@@ -234,20 +336,22 @@ export const TofProfilePlot: React.FC<TofProfilePlotProps> = ({
               fontSize={11} fill="#003366"
               transform={`rotate(-90, 10, ${PAD.top + plotH / 2})`}>Counts</text>
 
-            {/* ROI shaded band */}
+            {/* ROI shaded band — drag the middle to move it, keeping its width */}
             <rect x={Math.min(roiLoX, roiHiX)} y={PAD.top}
               width={Math.abs(roiHiX - roiLoX)} height={plotH}
-              fill="rgba(153,190,0,0.18)" />
+              fill="rgba(153,190,0,0.18)" style={{ cursor: "move" }} />
 
-            {/* Profile polyline */}
+            {/* Profile polyline — clipped to the plot area so zoomed-out data
+                outside the visible x-range is hidden */}
             {polylinePoints && (
               <polyline points={polylinePoints} fill="none"
-                stroke="#0099DC" strokeWidth={1.5} strokeLinejoin="round" />
+                stroke="#0099DC" strokeWidth={1.5} strokeLinejoin="round"
+                clipPath={`url(#${clipId})`} />
             )}
 
-            {/* ROI handles */}
+            {/* ROI handles — drag an edge to resize */}
             {[roiLoX, roiHiX].map((hx, i) => (
-              <g key={`h${i}`}>
+              <g key={`h${i}`} style={{ cursor: "ew-resize" }}>
                 <line x1={hx} y1={PAD.top} x2={hx} y2={PAD.top + plotH}
                   stroke="#7a9900" strokeWidth={1.5} />
                 <rect x={hx - 4} y={PAD.top + plotH / 2 - 9} width={8} height={18}

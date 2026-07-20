@@ -374,7 +374,7 @@
   color: #fff;
 }
 
-.tof-profile-clear-btn {
+.tof-profile-reset-btn {
   font-size: 0.75rem;
   padding: 2px 10px;
   background: #003366;
@@ -384,8 +384,27 @@
   cursor: pointer;
   transition: background 0.15s;
 }
-.tof-profile-clear-btn:hover {
+.tof-profile-reset-btn:hover {
   background: #0099DC;
+}
+
+.tof-profile-zoom-btn {
+  font-size: 0.75rem;
+  padding: 2px 10px;
+  background: transparent;
+  color: #0099DC;
+  border: 1px solid #0099DC;
+  border-radius: 3px;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.tof-profile-zoom-btn:hover:not(:disabled) {
+  background: #0099DC;
+  color: #ffffff;
+}
+.tof-profile-zoom-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 
 .tof-profile-empty {

@@ -574,9 +574,13 @@ function App() {
     []
   );
 
-  /** Compute the integrated-counts-vs-TOF profile for the current box region. */
+  /**
+   * Compute the integrated-counts-vs-TOF profile for the current box region.
+   * For raw events an optional `range` re-bins over just that TOF window (finer
+   * bins on zoom); NXlauetof bins are fixed by the file, so `range` is ignored.
+   */
   const computeBoxTof = useCallback(
-    (box: BoxRegion) => {
+    (box: BoxRegion, range?: [number, number] | null) => {
       try {
         if (typeof viewMode !== "number") return;
         if (fileType === "NXlauetof" && h5fileRef.current) {
@@ -588,7 +592,7 @@ function App() {
         } else {
           const ed = eventDataRef.current.get(viewMode);
           if (!ed) return;
-          const { tof, counts } = computeBoxTofProfile(ed, box, 256);
+          const { tof, counts } = computeBoxTofProfile(ed, box, 256, range ?? undefined);
           setTofProfile({ tof, counts });
           setTofRoi([tof[0], tof[tof.length - 1]]);
         }
@@ -624,6 +628,16 @@ function App() {
         boxRegionRef.current = box;
         computeBoxTof(box);
       }
+    },
+    [computeBoxTof]
+  );
+
+  /** Re-bin the raw-event TOF profile over a zoom range (null = full range). */
+  const handleTofZoom = useCallback(
+    (range: [number, number] | null) => {
+      const box = boxRegionRef.current;
+      if (!box) return;
+      computeBoxTof(box, range);
     },
     [computeBoxTof]
   );
@@ -884,7 +898,8 @@ function App() {
                       roi={tofRoi}
                       onRoiChange={setTofRoi}
                       onApply={handleTofRangeChange}
-                      onClear={handleLineScanClear}
+                      onZoom={handleTofZoom}
+                      rebinOnZoom={fileType !== "NXlauetof"}
                       unit={tofUnit}
                     />
                   )}

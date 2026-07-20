@@ -62,7 +62,8 @@ export interface TofProfileResult {
 export function computeBoxTofProfile(
   eventData: EventData,
   box: BoxRegion,
-  numBins = 256
+  numBins = 256,
+  tofRange?: [number, number]
 ): TofProfileResult {
   const { detectorShape, panelPixelIdMin, pixelToFlat, isIdentity,
           eventIdF64, tofF64, tofMin, tofMax } = eventData;
@@ -74,7 +75,11 @@ export function computeBoxTofProfile(
   const c0 = Math.max(0, Math.min(cols - 1, box.c0));
   const c1 = Math.max(0, Math.min(cols - 1, box.c1));
 
-  const range = tofMax - tofMin || 1;
+  // Bin over the requested TOF window (finer bins when zoomed in), else the
+  // panel's full TOF span.
+  const loT = tofRange ? Math.min(tofRange[0], tofRange[1]) : tofMin;
+  const hiT = tofRange ? Math.max(tofRange[0], tofRange[1]) : tofMax;
+  const range = hiT - loT || 1;
   const binWidth = range / numBins;
   const counts = new Float64Array(numBins);
 
@@ -86,14 +91,16 @@ export function computeBoxTofProfile(
     const row = (flat / cols) | 0;
     const col = flat - row * cols;
     if (row < r0 || row > r1 || col < c0 || col > c1) continue;
-    let bin = ((tofF64[i] - tofMin) / binWidth) | 0;
+    const tv = tofF64[i];
+    if (tv < loT || tv > hiT) continue;
+    let bin = ((tv - loT) / binWidth) | 0;
     if (bin >= numBins) bin = numBins - 1;
     if (bin >= 0) counts[bin]++;
   }
 
   const tof = new Float64Array(numBins);
-  for (let i = 0; i < numBins; i++) tof[i] = tofMin + (i + 0.5) * binWidth;
-  return { tof, counts, tofMin, tofMax };
+  for (let i = 0; i < numBins; i++) tof[i] = loT + (i + 0.5) * binWidth;
+  return { tof, counts, tofMin: loT, tofMax: hiT };
 }
 
 /**
