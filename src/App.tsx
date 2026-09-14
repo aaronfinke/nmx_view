@@ -5,30 +5,17 @@ import { ColorBar } from "./components/ViridisColorBar";
 import type { ColorMap, ColorScaleType, Domain } from "@h5web/lib";
 import { FileLoader } from "./components/FileLoader";
 import { DetectorImage } from "./components/DetectorImage";
+import { PanelThumbnail } from "./components/PanelThumbnail";
 import { TofRangeSlider } from "./components/TofRangeSlider";
 import { LineScanPlot, LINE_SCAN_PLOT_WIDTH } from "./components/LineScanPlot";
 import { TofProfilePlot } from "./components/TofProfilePlot";
-import {
-  openFile,
-  detectFileType,
-  findDetectorPanels,
-  readEventData,
-  findLauetofPanels,
-  readLauetofSingleSlice,
-  readLauetofBoxTofProfile,
-  type NexusFileType,
-  type DetectorPanelInfo,
-  type LauetofPanelInfo,
-  type EventData,
+import type {
+  NexusFileType,
+  DetectorPanelInfo,
+  LauetofPanelInfo,
 } from "./lib/h5wasm-loader";
-import {
-  computeTofHistogram,
-  computeDetectorImage,
-  computeBoxTofProfile,
-  type DetectorImageResult,
-  type BoxRegion,
-} from "./lib/event-data";
-import type { File as H5File } from "h5wasm";
+import type { DetectorImageResult, BoxRegion } from "./lib/event-data";
+import { H5Client } from "./lib/h5-client";
 import "./App.css";
 
 /** Reserve px for header, TOF slider, status bar, padding */
@@ -195,8 +182,13 @@ function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tofRange]);
 
-  const h5fileRef = useRef<H5File | null>(null);
-  const eventDataRef = useRef<Map<number, EventData>>(new Map());
+  // The worker owns the open file and every per-event array; this thread only
+  // ever holds the images it draws.
+  const clientRef = useRef<H5Client | null>(null);
+  // Mirrors `detectorImages`. Worker results arrive for a subset of panels and
+  // have to be merged onto the current set; reading that (and the event total)
+  // out of a setState updater would depend on when React runs it.
+  const detectorImagesRef = useRef<(DetectorImageResult | null)[]>([]);
   const browserFileRef = useRef<File | null>(null);
   // Last box region a TOF profile was computed for — avoids recomputing when
   // onBoxDrawn re-fires only because the underlying image changed.
@@ -273,66 +265,65 @@ function App() {
   const yieldToUI = () =>
     new Promise<void>((r) => requestAnimationFrame(() => setTimeout(r, 0)));
 
+  /** The worker is created on first use and reused for the life of the page. */
+  /** Single write path for detector images, keeping the mirror ref in step. */
+  const applyImages = useCallback((next: (DetectorImageResult | null)[]) => {
+    detectorImagesRef.current = next;
+    setDetectorImages(next);
+  }, []);
+
+  /** Merge a partial worker result onto the images currently displayed. */
+  const mergeImages = useCallback((incoming: (DetectorImageResult | null)[]) => {
+    const merged = [...detectorImagesRef.current];
+    incoming.forEach((img, i) => { if (img) merged[i] = img; });
+    applyImages(merged);
+    let totalEvents = 0;
+    for (const img of merged) totalEvents += img?.totalEvents ?? 0;
+    return totalEvents;
+  }, [applyImages]);
+
+  const getClient = useCallback(() => {
+    if (!clientRef.current) {
+      const client = new H5Client();
+      client.setProgressHandler((label, value) => {
+        setLoadProgressLabel(label);
+        setLoadProgress(value);
+        setStatus(label);
+      });
+      clientRef.current = client;
+    }
+    return clientRef.current;
+  }, []);
+
+  useEffect(() => () => { clientRef.current?.terminate(); }, []);
+
   /** Load ALL NXevent_data panels from the file */
+  /** Bin every NXevent_data panel in the worker, then pull back the images. */
   const loadAllPanels = useCallback(
-    async (h5file: H5File, foundPanels: DetectorPanelInfo[]) => {
-      eventDataRef.current = new Map();
-      let globalTofMin = Infinity;
-      let globalTofMax = -Infinity;
-      const totalSteps = foundPanels.length * 2 + 1; // read + image per panel + final
-      let step = 0;
-
-      // Read event data for all panels
-      for (let i = 0; i < foundPanels.length; i++) {
-        const label = `Reading ${foundPanels[i].name} (${foundPanels[i].numEvents.toLocaleString()} events)...`;
-        setLoadProgressLabel(label);
-        setLoadProgress(((++step) / totalSteps) * 100);
-        setStatus(label);
-        await yieldToUI();
-
-        const ed = readEventData(h5file, foundPanels[i].path);
-        eventDataRef.current.set(i, ed);
-        const hist = computeTofHistogram(ed, numBins);
-        if (hist.tofMin < globalTofMin) globalTofMin = hist.tofMin;
-        if (hist.tofMax > globalTofMax) globalTofMax = hist.tofMax;
-      }
-
-      const range: [number, number] = [globalTofMin, globalTofMax];
+    async (client: H5Client, foundPanels: DetectorPanelInfo[]) => {
+      const { tofMin, tofMax } = await client.loadEventPanels(numBins);
+      const range: [number, number] = [tofMin, tofMax];
       setTofRange(range);
-      setTofAbsMin(globalTofMin);
-      setTofAbsMax(globalTofMax);
+      setTofAbsMin(tofMin);
+      setTofAbsMax(tofMax);
+      await yieldToUI();
 
-      // Compute images for all panels
-      const images: DetectorImageResult[] = [];
-      for (let i = 0; i < foundPanels.length; i++) {
-        const label = `Computing image for ${foundPanels[i].name}...`;
-        setLoadProgressLabel(label);
-        setLoadProgress(((++step) / totalSteps) * 100);
-        setStatus(label);
-        await yieldToUI();
-
-        const ed = eventDataRef.current.get(i)!;
-        images.push(computeDetectorImage(ed, range));
-      }
-      setDetectorImages(images);
+      const { images } = await client.computeImages(range);
+      applyImages(images);
 
       setLoadProgress(100);
       setLoadProgressLabel("Done!");
-      const totalEvents = images.reduce((s, img) => s + img.totalEvents, 0);
+      const totalEvents = images.reduce((sum, img) => sum + (img?.totalEvents ?? 0), 0);
       setStatus(
-        `Loaded ${foundPanels.length} panels — ${totalEvents.toLocaleString()} total events`
+        `Loaded ${foundPanels.length} panels — ${totalEvents.toLocaleString()} events`
       );
     },
-    [numBins]
+    [numBins, applyImages]
   );
 
-  /** Load ALL NXlauetof panels — read TOF bins and show first slice */
   const loadAllLauetofPanels = useCallback(
-    async (h5file: H5File, foundPanels: LauetofPanelInfo[]) => {
-      const totalSteps = foundPanels.length + 1;
-      let step = 0;
-
-      // Compute global TOF range across all panels
+    async (client: H5Client, foundPanels: LauetofPanelInfo[]) => {
+      // Global TOF range across all panels
       let globalTofMin = Infinity;
       let globalTofMax = -Infinity;
       for (const p of foundPanels) {
@@ -350,29 +341,15 @@ function App() {
       setTofAbsMin(globalTofMin);
       setTofAbsMax(globalTofMax);
       // Set initial range to first bin
-      const initialRange: [number, number] = [
-        globalTofMin,
-        globalTofMin + binWidth,
-      ];
-      setTofRange(initialRange);
+      setTofRange([globalTofMin, globalTofMin + binWidth]);
 
       // Read first slice for all panels
-      const images: DetectorImageResult[] = [];
-      for (let i = 0; i < foundPanels.length; i++) {
-        const p = foundPanels[i];
-        const label = `Reading ${p.name} slice 1/${p.shape[2]}...`;
-        setLoadProgressLabel(label);
-        setLoadProgress(((++step) / totalSteps) * 100);
-        setStatus(label);
-        await yieldToUI();
-
-        images.push(readLauetofSingleSlice(h5file, p.path, 0));
-      }
-      setDetectorImages(images);
+      const { images } = await client.lauetofSlices(null);
+      applyImages(images);
 
       setLoadProgress(100);
       setLoadProgressLabel("Done!");
-      const totalCounts = images.reduce((s, img) => s + img.totalEvents, 0);
+      const totalCounts = images.reduce((sum, img) => sum + (img?.totalEvents ?? 0), 0);
       setStatus(
         `Loaded ${foundPanels.length} panels — slice 1/${foundPanels[0]?.shape[2] ?? 0} — ${totalCounts.toLocaleString()} counts`
       );
@@ -387,35 +364,30 @@ function App() {
       try {
         browserFileRef.current = file;
         setFileName(file.name);
-        const h5file = await openFile(file);
-        h5fileRef.current = h5file;
-
-        setStatus("Detecting file type...");
-        const detectedType = detectFileType(h5file);
+        const client = getClient();
+        const { fileType: detectedType, panels: foundPanels, lauetofPanels: foundLauetof } =
+          await client.open(file);
         setFileType(detectedType);
 
         setLoadProgress(0);
         setLoadProgressLabel("Starting...");
 
         if (detectedType === "NXlauetof") {
-          const foundPanels = findLauetofPanels(h5file);
-          if (foundPanels.length === 0) {
+          if (foundLauetof.length === 0) {
             setStatus("No detector panels found in NXlauetof file.");
             setLoading(false);
             return;
           }
-          await loadAllLauetofPanels(h5file, foundPanels);
-          setLauetofPanels(foundPanels);
+          setLauetofPanels(foundLauetof);
+          await loadAllLauetofPanels(client, foundLauetof);
         } else {
-          setStatus("Scanning for detector panels...");
-          const foundPanels = findDetectorPanels(h5file);
           if (foundPanels.length === 0) {
             setStatus("No NXevent_data detector panels found in this file.");
             setLoading(false);
             return;
           }
-          await loadAllPanels(h5file, foundPanels);
           setPanels(foundPanels);
+          await loadAllPanels(client, foundPanels);
         }
       } catch (err) {
         setStatus(`Error: ${(err as Error).message}`);
@@ -424,7 +396,7 @@ function App() {
         setLoading(false);
       }
     },
-    [loadAllPanels, loadAllLauetofPanels]
+    [getClient, loadAllPanels, loadAllLauetofPanels]
   );
 
   /** Fetch the bundled demo dataset (streaming download progress) and load it */
@@ -480,37 +452,30 @@ function App() {
     setLoading(true);
     setStatus("Reloading file...");
     try {
-      if (h5fileRef.current) {
-        h5fileRef.current.close();
-        h5fileRef.current = null;
-      }
       const file = browserFileRef.current;
-      const h5file = await openFile(file);
-      h5fileRef.current = h5file;
-
-      const detectedType = detectFileType(h5file);
+      const client = getClient();
+      const { fileType: detectedType, panels: foundPanels, lauetofPanels: foundLauetof } =
+        await client.open(file);
       setFileType(detectedType);
       setLoadProgress(0);
       setLoadProgressLabel("Reloading...");
 
       if (detectedType === "NXlauetof") {
-        const foundPanels = findLauetofPanels(h5file);
-        if (foundPanels.length === 0) {
+        if (foundLauetof.length === 0) {
           setStatus("No detector panels found after reload.");
           setLoading(false);
           return;
         }
-        setLauetofPanels(foundPanels);
-        await loadAllLauetofPanels(h5file, foundPanels);
+        setLauetofPanels(foundLauetof);
+        await loadAllLauetofPanels(client, foundLauetof);
       } else {
-        const foundPanels = findDetectorPanels(h5file);
         if (foundPanels.length === 0) {
           setStatus("No NXevent_data detector panels found after reload.");
           setLoading(false);
           return;
         }
         setPanels(foundPanels);
-        await loadAllPanels(h5file, foundPanels);
+        await loadAllPanels(client, foundPanels);
       }
     } catch (err) {
       setStatus(`Reload error: ${(err as Error).message}`);
@@ -518,75 +483,46 @@ function App() {
     } finally {
       setLoading(false);
     }
-  }, [loadAllPanels, loadAllLauetofPanels]);
+  }, [getClient, loadAllPanels, loadAllLauetofPanels]);
 
   const handleTofRangeChange = useCallback(
     (range: [number, number]) => {
       setTofRange(range);
+      const client = clientRef.current;
+      if (!client) return;
       const runId = beginRecompute(fileType);
-      setTimeout(() => {
-        if (recomputeRunIdRef.current !== runId) return;
-        if (fileType === "NXlauetof" && h5fileRef.current) {
-          // NXlauetof: find closest bin center and read that single slice
-          const center = (range[0] + range[1]) / 2;
-          setDetectorImages((prev) => {
-            const images = [...prev];
-            for (let i = 0; i < lauetofPanels.length; i++) {
-              // In single-panel mode, skip panels not being viewed
-              if (viewMode !== "overview" && i !== viewMode) continue;
-              const p = lauetofPanels[i];
-              let bestIdx = 0;
-              let bestDist = Math.abs(p.tofBins[0] - center);
-              for (let j = 1; j < p.tofBins.length; j++) {
-                const dist = Math.abs(p.tofBins[j] - center);
-                if (dist < bestDist) {
-                  bestDist = dist;
-                  bestIdx = j;
-                }
-              }
-              images[i] = readLauetofSingleSlice(h5fileRef.current!, p.path, bestIdx);
-            }
-            return images;
-          });
-          endRecompute(runId);
-          const sliceIdx = (() => {
-            const p = lauetofPanels[0];
-            if (!p) return 0;
-            let best = 0;
-            let bestD = Math.abs(p.tofBins[0] - center);
-            for (let j = 1; j < p.tofBins.length; j++) {
-              const d = Math.abs(p.tofBins[j] - center);
-              if (d < bestD) { bestD = d; best = j; }
-            }
-            return best;
-          })();
-          setStatus(`${lauetofPanels.length} panels — slice ${sliceIdx + 1}/${lauetofPanels[0]?.shape[2] ?? 0}`);
-        } else {
-          // NXevent_data: bin events only for visible panel(s)
-          setDetectorImages((prev) => {
-            const images = [...prev];
-            for (let i = 0; i < panels.length; i++) {
-              // In single-panel mode, skip panels not being viewed
-              if (viewMode !== "overview" && i !== viewMode) continue;
-              const ed = eventDataRef.current.get(i);
-              if (ed) {
-                images[i] = computeDetectorImage(ed, range);
-              }
-            }
-            return images;
-          });
-          endRecompute(runId);
-          const totalEvents = detectorImages.reduce(
-            (s, img) => s + (img?.totalEvents ?? 0),
-            0
-          );
-          setStatus(
-            `${panels.length} panels — ${totalEvents.toLocaleString()} events in TOF range`
-          );
+      // Only the visible panel(s) need re-binning in single-panel mode.
+      const indices = viewMode === "overview" ? null : [viewMode];
+
+      void (async () => {
+        try {
+          if (fileType === "NXlauetof") {
+            // Snap to the bin centre nearest the middle of the requested range
+            const center = (range[0] + range[1]) / 2;
+            const { images, sliceIndices } = await client.lauetofSlices(center, indices);
+            if (recomputeRunIdRef.current !== runId) return;
+            mergeImages(images);
+            const shown = indices ? indices[0] : 0;
+            setStatus(
+              `${lauetofPanels.length} panels — slice ${(sliceIndices[shown] ?? 0) + 1}/${lauetofPanels[0]?.shape[2] ?? 0}`
+            );
+          } else {
+            const { images } = await client.computeImages(range, indices);
+            if (recomputeRunIdRef.current !== runId) return;
+            const totalEvents = mergeImages(images);
+            setStatus(
+              `${panels.length} panels — ${totalEvents.toLocaleString()} events in TOF range`
+            );
+          }
+        } catch (err) {
+          console.error("TOF range recompute failed:", err);
+          setStatus(`Error: ${(err as Error).message}`);
+        } finally {
+          if (recomputeRunIdRef.current === runId) endRecompute(runId);
         }
-      }, 0);
+      })();
     },
-    [beginRecompute, endRecompute, fileType, panels, lauetofPanels, viewMode, detectorImages]
+    [beginRecompute, endRecompute, fileType, panels, lauetofPanels, viewMode, mergeImages]
   );
 
   // Compute auto domain: min=0, max=min(vals.max(), mu + 2*sigma)
@@ -657,28 +593,27 @@ function App() {
    */
   const computeBoxTof = useCallback(
     (box: BoxRegion, range?: [number, number] | null) => {
-      try {
-        if (typeof viewMode !== "number") return;
-        if (fileType === "NXlauetof" && h5fileRef.current) {
-          const panel = lauetofPanels[viewMode];
-          if (!panel) return;
-          const counts = readLauetofBoxTofProfile(h5fileRef.current, panel.path, box);
-          setTofProfile({ tof: panel.tofBins, counts });
-          setTofRoi([panel.tofBins[0], panel.tofBins[panel.tofBins.length - 1]]);
-        } else {
-          const ed = eventDataRef.current.get(viewMode);
-          if (!ed) return;
-          const { tof, counts } = computeBoxTofProfile(ed, box, 256, range ?? undefined);
+      if (typeof viewMode !== "number") return;
+      const client = clientRef.current;
+      if (!client) return;
+      void (async () => {
+        try {
+          const { tof, counts } = await client.boxTofProfile(
+            viewMode,
+            box,
+            256,
+            range ?? null
+          );
           setTofProfile({ tof, counts });
           setTofRoi([tof[0], tof[tof.length - 1]]);
+        } catch (err) {
+          console.error("TOF profile error:", err);
+          setTofProfile(null);
+          setTofRoi(null);
         }
-      } catch (err) {
-        console.error("TOF profile error:", err);
-        setTofProfile(null);
-        setTofRoi(null);
-      }
+      })();
     },
-    [fileType, viewMode, lauetofPanels]
+    [viewMode]
   );
 
   const handleBoxDrawn = useCallback(
@@ -779,16 +714,13 @@ function App() {
             ref={newFileBtnRef}
             className="reload-btn"
             onClick={() => {
-              if (h5fileRef.current) {
-                h5fileRef.current.close();
-                h5fileRef.current = null;
-              }
+              void clientRef.current?.close();
               browserFileRef.current = null;
-              eventDataRef.current = new Map();
               setFileName("");
               setFileType("unknown");
               setPanels([]);
               setLauetofPanels([]);
+              detectorImagesRef.current = [];
               setDetectorImages([]);
               setTofRange([0, 0]);
               setTofAbsMin(0);
@@ -887,6 +819,21 @@ function App() {
                     const img = detectorImages[i];
                     if (!img) return null;
                     const lauetofPanel = fileType === "NXlauetof" ? lauetofPanels[i] : null;
+                    // Overview draws with Canvas2D: one WebGL context per panel
+                    // blows past the browser's ~16-context cap (see PanelThumbnail).
+                    if (viewMode === "overview") {
+                      return (
+                        <PanelThumbnail
+                          key={panel.path}
+                          imageResult={img}
+                          panelName={panel.name}
+                          size={chartSize}
+                          domain={sharedDomain}
+                          colorScale={colorScale}
+                          colorMap={colorMap}
+                        />
+                      );
+                    }
                     return (
                       <DetectorImage
                         key={panel.path}
@@ -896,14 +843,14 @@ function App() {
                         colorMap={colorMap}
                         size={chartSize}
                         domain={sharedDomain}
-                        singlePanel={viewMode !== "overview"}
+                        singlePanel
                         panelGeometry={lauetofPanel?.geometry}
                         tofCenterNs={
                           lauetofPanel
                             ? (tofRange[0] + tofRange[1]) / 2
                             : undefined
                         }
-                        enableLineScan={viewMode !== "overview"}
+                        enableLineScan
                         onLineDrawn={handleLineDrawn}
                         onBoxDrawn={handleBoxDrawn}
                         clearLine={clearLineSignal}

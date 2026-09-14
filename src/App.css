@@ -584,6 +584,21 @@
   top: 0.5rem;
 }
 
+/* Hover readout for the Canvas2D overview thumbnails */
+.thumb-tooltip {
+  position: absolute;
+  pointer-events: none;
+  z-index: 10;
+  padding: 4px 6px;
+  font-size: 11px;
+  line-height: 1.3;
+  white-space: nowrap;
+  color: #1a1a1a;
+  background: rgba(255, 255, 255, 0.92);
+  border: 1px solid #c8c8c8;
+  border-radius: 3px;
+}
+
 /* Invert the WebGL canvas for Greys_r (white=min, black=max) */
 .detector-image-panel[data-invert="true"] canvas {
   filter: invert(1);
