@@ -9,13 +9,13 @@ export interface TofHistogramResult {
 
 /**
  * Compute a TOF histogram from pre-processed event data.
- * Uses pre-converted Float64Array (no BigInt conversion needed).
+ * Scans the pre-narrowed Float32 TOF array (no BigInt conversion needed).
  */
 export function computeTofHistogram(
   eventData: EventData,
   numBins: number = 500
 ): TofHistogramResult {
-  const { tofMin, tofMax, tofF64 } = eventData;
+  const { tofMin, tofMax, tof } = eventData;
 
   const range = tofMax - tofMin;
   const binWidth = range / numBins;
@@ -25,8 +25,8 @@ export function computeTofHistogram(
   }
 
   const counts = new Float64Array(numBins);
-  for (let i = 0; i < tofF64.length; i++) {
-    const bin = Math.floor((tofF64[i] - tofMin) / binWidth);
+  for (let i = 0; i < tof.length; i++) {
+    const bin = Math.floor((tof[i] - tofMin) / binWidth);
     const clampedBin = Math.min(bin, numBins - 1);
     if (clampedBin >= 0) counts[clampedBin]++;
   }
@@ -66,7 +66,7 @@ export function computeBoxTofProfile(
   tofRange?: [number, number]
 ): TofProfileResult {
   const { detectorShape, panelPixelIdMin, pixelToFlat, isIdentity,
-          eventIdF64, tofF64, tofMin, tofMax } = eventData;
+          eventId, tof: eventTof, tofMin, tofMax } = eventData;
   const [rows, cols] = detectorShape;
   const totalPixels = rows * cols;
 
@@ -83,15 +83,15 @@ export function computeBoxTofProfile(
   const binWidth = range / numBins;
   const counts = new Float64Array(numBins);
 
-  for (let i = 0; i < tofF64.length; i++) {
-    const pid = eventIdF64[i] - panelPixelIdMin;
+  for (let i = 0; i < eventTof.length; i++) {
+    const pid = eventId[i] - panelPixelIdMin;
     if (pid < 0 || pid >= totalPixels) continue;
     const flat = isIdentity ? pid : pixelToFlat[pid];
     if (flat < 0) continue;
     const row = (flat / cols) | 0;
     const col = flat - row * cols;
     if (row < r0 || row > r1 || col < c0 || col > c1) continue;
-    const tv = tofF64[i];
+    const tv = eventTof[i];
     if (tv < loT || tv > hiT) continue;
     let bin = ((tv - loT) / binWidth) | 0;
     if (bin >= numBins) bin = numBins - 1;
@@ -105,7 +105,7 @@ export function computeBoxTofProfile(
 
 /**
  * Bin events into a 2D detector image for a given TOF range.
- * Scans pre-converted Float64Arrays (no BigInt conversion per call).
+ * Scans the pre-narrowed Uint32/Float32 arrays (no conversion per call).
  * Uses cached pixel-to-flat mapping (computed once at load time).
  */
 export function computeDetectorImage(
@@ -115,7 +115,7 @@ export function computeDetectorImage(
   console.time('computeDetectorImage');
 
   const { detectorShape, panelPixelIdMin, pixelToFlat, isIdentity,
-          eventIdF64, tofF64 } = eventData;
+          eventId, tof } = eventData;
   const [rows, cols] = detectorShape;
   const totalPixels = rows * cols;
   const image = new Float64Array(totalPixels);
@@ -125,10 +125,10 @@ export function computeDetectorImage(
 
   if (isIdentity) {
     // Fast path: pixel ID is the flat index directly
-    for (let i = 0; i < tofF64.length; i++) {
-      const t = tofF64[i];
+    for (let i = 0; i < tof.length; i++) {
+      const t = tof[i];
       if (t < tofLow || t > tofHigh) continue;
-      const pid = eventIdF64[i] - panelPixelIdMin;
+      const pid = eventId[i] - panelPixelIdMin;
       if (pid >= 0 && pid < totalPixels) {
         image[pid]++;
         totalEvents++;
@@ -136,10 +136,10 @@ export function computeDetectorImage(
     }
   } else {
     // General path: use cached pixel-to-flat map
-    for (let i = 0; i < tofF64.length; i++) {
-      const t = tofF64[i];
+    for (let i = 0; i < tof.length; i++) {
+      const t = tof[i];
       if (t < tofLow || t > tofHigh) continue;
-      const pid = eventIdF64[i] - panelPixelIdMin;
+      const pid = eventId[i] - panelPixelIdMin;
       if (pid >= 0 && pid < totalPixels) {
         const flatIdx = pixelToFlat[pid];
         if (flatIdx >= 0) {

@@ -363,13 +363,13 @@ export function buildIdfDetectorNumber(g: IdfPanelGeometry): Int32Array {
 
 /** Min/max over an already-loaded event_id array. */
 export function eventIdRange(
-  arr: Int32Array | BigInt64Array
+  arr: Uint32Array
 ): { min: number; max: number } | null {
   if (arr.length === 0) return null;
   let min = Infinity;
   let max = -Infinity;
   for (let i = 0; i < arr.length; i++) {
-    const v = Number(arr[i]);
+    const v = arr[i];
     if (v < min) min = v;
     if (v > max) max = v;
   }
@@ -482,10 +482,18 @@ export function findDetectorPanels(h5file: H5File): DetectorPanelInfo[] {
 }
 
 export interface EventData {
-  /** Pre-converted event pixel IDs (Float64) */
-  eventIdF64: Float64Array;
-  /** Pre-converted TOF values (Float64) */
-  tofF64: Float64Array;
+  /**
+   * Event pixel IDs. Uint32 rather than Float64: ids are integers, and 4 bytes
+   * holds every value a detector can produce exactly (up to 4.29e9), where
+   * Float32 would go inexact above 2^24 = 16,777,216.
+   */
+  eventId: Uint32Array;
+  /**
+   * TOF values in nanoseconds. Float32 costs 4 bytes and ~1e-7 relative
+   * precision — a few ns across a full pulse period, far below any bin width,
+   * and lossless for the float32 µs that event files typically store.
+   */
+  tof: Float32Array;
   detectorShape: [number, number];
   panelPixelIdMin: number;
   /** Cached pixel-to-flat-index mapping */
@@ -497,15 +505,48 @@ export interface EventData {
   tofMax: number;
 }
 
+/** Any numeric typed array h5wasm may hand back for an event dataset. */
+type RawEventArray = ArrayLike<number> | BigInt64Array | BigUint64Array;
+
+function isBigArray(arr: RawEventArray): arr is BigInt64Array | BigUint64Array {
+  return arr instanceof BigInt64Array || arr instanceof BigUint64Array;
+}
+
 /**
- * Convert BigInt64Array or Int32Array to Float64Array.
+ * Copy event ids into a Uint32Array, avoiding a conversion entirely when the
+ * file already stores uint32 (as NeXus event files normally do).
  */
-function toFloat64(arr: Int32Array | BigInt64Array): Float64Array {
-  const out = new Float64Array(arr.length);
-  if (arr instanceof BigInt64Array) {
-    for (let i = 0; i < arr.length; i++) out[i] = Number(arr[i]);
+function toUint32(arr: RawEventArray): Uint32Array {
+  if (arr instanceof Uint32Array) return arr;
+  const out = new Uint32Array(arr.length);
+  let overflow = false;
+  if (isBigArray(arr)) {
+    for (let i = 0; i < arr.length; i++) {
+      const v = Number(arr[i]);
+      if (v > 0xffffffff) overflow = true;
+      out[i] = v;
+    }
   } else {
-    for (let i = 0; i < arr.length; i++) out[i] = arr[i];
+    for (let i = 0; i < arr.length; i++) {
+      const v = arr[i];
+      if (v > 0xffffffff) overflow = true;
+      out[i] = v;
+    }
+  }
+  if (overflow) {
+    console.warn("Event ids exceed the uint32 range and were truncated");
+  }
+  return out;
+}
+
+/** Copy TOF values into a Float32Array, scaling to nanoseconds in the same pass. */
+function toFloat32Ns(arr: RawEventArray, factor: number): Float32Array {
+  if (factor === 1.0 && arr instanceof Float32Array) return arr;
+  const out = new Float32Array(arr.length);
+  if (isBigArray(arr)) {
+    for (let i = 0; i < arr.length; i++) out[i] = Number(arr[i]) * factor;
+  } else {
+    for (let i = 0; i < arr.length; i++) out[i] = arr[i] * factor;
   }
   return out;
 }
@@ -549,8 +590,13 @@ export function readEventData(h5file: H5File, panelPath: string): EventData {
   let detNumDs = h5file.get(`${panelPath}/detector_number`) as H5Dataset | null;
   if (!detNumDs) detNumDs = evGroup.get("detector_number") as H5Dataset | null;
 
-  const rawEventId = eventIdDs.value as Int32Array | BigInt64Array;
-  const rawTof = etoDs.value as Int32Array | BigInt64Array;
+  // Narrow to 4-byte arrays once, up front: ids are integers and TOF only ever
+  // needs float precision, so Float64 doubled the footprint for nothing. When
+  // the file already stores uint32 ids / float32 TOF these adopt without a copy.
+  console.time(`[${panelPath}] typed-array conversion`);
+  const eventId = toUint32(eventIdDs.value as RawEventArray);
+  const tof = toFloat32Ns(etoDs.value as RawEventArray, getTofToNsFactor(etoDs));
+  console.timeEnd(`[${panelPath}] typed-array conversion`);
 
   let detectorNumber: Int32Array;
   let detectorShape: [number, number];
@@ -572,7 +618,7 @@ export function readEventData(h5file: H5File, panelPath: string): EventData {
       : resolveIdfGrid(
           parseInstrumentIdf(h5file),
           panelPath.split("/").pop() ?? "",
-          eventIdRange(rawEventId)
+          eventIdRange(eventId)
         );
 
     if (xOff?.shape && yOff?.shape) {
@@ -597,35 +643,25 @@ export function readEventData(h5file: H5File, panelPath: string): EventData {
     }
   }
 
-  // 1. Convert BigInt → Float64 (done once) + unit → ns
-  console.time(`[${panelPath}] BigInt→Float64`);
-  const eventIdF64 = toFloat64(rawEventId);
-  const tofF64 = toFloat64(rawTof);
-  const tofFactor = getTofToNsFactor(etoDs);
-  if (tofFactor !== 1.0) {
-    for (let i = 0; i < tofF64.length; i++) tofF64[i] *= tofFactor;
-  }
-  console.timeEnd(`[${panelPath}] BigInt→Float64`);
-
-  // 2. Find panelPixelIdMin
+  // Find panelPixelIdMin
   let panelPixelIdMin = Number.MAX_SAFE_INTEGER;
   for (let i = 0; i < detectorNumber.length; i++) {
     if (detectorNumber[i] < panelPixelIdMin) panelPixelIdMin = detectorNumber[i];
   }
 
-  // 3. Build + cache pixel map
+  // Build + cache pixel map
   const totalPixels = detectorShape[0] * detectorShape[1];
   console.time(`[${panelPath}] buildPixelMap`);
   const { pixelToFlat, isIdentity } = buildPixelMap(detectorNumber, panelPixelIdMin, totalPixels);
   console.timeEnd(`[${panelPath}] buildPixelMap`);
 
-  // 4. Find TOF bounds with a single O(N) pass
+  // Find TOF bounds with a single O(N) pass
   let tofMin = Infinity;
   let tofMax = -Infinity;
   console.time(`[${panelPath}] TOF bounds`);
 
-  for (let i = 0; i < tofF64.length; i++) {
-    const v = tofF64[i];
+  for (let i = 0; i < tof.length; i++) {
+    const v = tof[i];
     if (v < tofMin) tofMin = v;
     if (v > tofMax) tofMax = v;
   }
@@ -634,8 +670,8 @@ export function readEventData(h5file: H5File, panelPath: string): EventData {
   if (!isFinite(tofMin)) { tofMin = 0; tofMax = 0; }
   console.timeEnd(`[${panelPath}] total readEventData`);
   return {
-    eventIdF64,
-    tofF64,
+    eventId,
+    tof,
     detectorShape,
     panelPixelIdMin,
     pixelToFlat,
