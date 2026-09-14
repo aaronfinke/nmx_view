@@ -14,6 +14,7 @@ import {
   readEventData,
   readLauetofSingleSlice,
   readLauetofBoxTofProfile,
+  parseInstrumentIdf,
   type DetectorPanelInfo,
   type LauetofPanelInfo,
   type EventData,
@@ -33,6 +34,8 @@ import type {
   LauetofSlicesResult,
   TofProfileWire,
 } from "./h5-worker-protocol";
+import { buildPanels3D } from "./panel3d";
+import type { Panels3DResult } from "./h5-worker-protocol";
 import type { File as H5File } from "h5wasm";
 
 let h5file: H5File | null = null;
@@ -173,6 +176,13 @@ function handleBoxTofProfile(
   return { tof, counts };
 }
 
+function handlePanels3D(): Panels3DResult {
+  const file = requireFile();
+  return {
+    panels3d: buildPanels3D(file, panels, lauetofPanels, parseInstrumentIdf(file)),
+  };
+}
+
 /** Buffers to hand over rather than copy — images and profiles are the bulk. */
 function transfersFor(result: unknown): Transferable[] {
   const out: Transferable[] = [];
@@ -207,6 +217,9 @@ self.onmessage = async (e: MessageEvent<WorkerRequest>) => {
         break;
       case "boxTofProfile":
         result = handleBoxTofProfile(req.panelIndex, req.box, req.numBins, req.tofRange);
+        break;
+      case "panels3d":
+        result = handlePanels3D();
         break;
       case "close":
         closeFile();

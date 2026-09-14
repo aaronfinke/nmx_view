@@ -6,6 +6,7 @@ import type { ColorMap, ColorScaleType, Domain } from "@h5web/lib";
 import { FileLoader } from "./components/FileLoader";
 import { DetectorImage } from "./components/DetectorImage";
 import { PanelThumbnail } from "./components/PanelThumbnail";
+import { Instrument3D } from "./components/Instrument3D";
 import { TofRangeSlider } from "./components/TofRangeSlider";
 import { LineScanPlot, LINE_SCAN_PLOT_WIDTH } from "./components/LineScanPlot";
 import { TofProfilePlot } from "./components/TofProfilePlot";
@@ -15,6 +16,7 @@ import type {
   LauetofPanelInfo,
 } from "./lib/h5wasm-loader";
 import type { DetectorImageResult, BoxRegion } from "./lib/event-data";
+import type { Panel3D } from "./lib/panel3d";
 import { H5Client } from "./lib/h5-client";
 import "./App.css";
 
@@ -100,7 +102,8 @@ function App() {
   const [loadProgress, setLoadProgress] = useState(0);
   const [loadProgressLabel, setLoadProgressLabel] = useState("");
   const [fileName, setFileName] = useState("");
-  const [viewMode, setViewMode] = useState<"overview" | number>("overview");
+  const [viewMode, setViewMode] = useState<"overview" | "3d" | number>("overview");
+  const [panels3d, setPanels3d] = useState<Panel3D[]>([]);
   const [showHelp, setShowHelp] = useState(false);
   // Line scan / box integration state (single-panel only)
   const [lineScanProfile, setLineScanProfile] = useState<number[] | null>(null);
@@ -153,11 +156,22 @@ function App() {
   }, [hasPanels]);
 
   const activePanelCount = fileType === "NXlauetof" ? lauetofPanels.length : panels.length;
+  /** Panel name → current image, so the 3D view can texture by name. */
+  const imagesByName = useMemo(() => {
+    const m = new Map<string, DetectorImageResult>();
+    const list = fileType === "NXlauetof" ? lauetofPanels : panels;
+    list.forEach((p, i) => {
+      const img = detectorImages[i];
+      if (img) m.set(p.name, img);
+    });
+    return m;
+  }, [fileType, panels, lauetofPanels, detectorImages]);
   const isOverview = viewMode === "overview";
-  const displayPanelCount = viewMode === "overview" ? activePanelCount : 1;
+  const is3D = viewMode === "3d";
+  const displayPanelCount = isOverview ? activePanelCount : 1;
   // Reserve space for the resizable analysis column in single-panel mode
   // (column width + divider + inter-panel gaps).
-  const lineScanReserve = isOverview ? 0 : analysisWidth + RESIZER_WIDTH + 24;
+  const lineScanReserve = isOverview || is3D ? 0 : analysisWidth + RESIZER_WIDTH + 24;
   const chartSize = useChartSize(displayPanelCount, isOverview, lineScanReserve);
 
   // Clear line scan state whenever the user switches view mode.
@@ -282,6 +296,20 @@ function App() {
     return totalEvents;
   }, [applyImages]);
 
+  /**
+   * Ask the worker for lab-frame panel geometry. Absent or unresolvable
+   * geometry is not an error — the 3D option simply does not appear.
+   */
+  const loadPanels3D = useCallback(async (client: H5Client) => {
+    try {
+      const { panels3d } = await client.panels3d();
+      setPanels3d(panels3d);
+    } catch (err) {
+      console.warn("No 3D panel geometry available:", err);
+      setPanels3d([]);
+    }
+  }, []);
+
   const getClient = useCallback(() => {
     if (!clientRef.current) {
       const client = new H5Client();
@@ -310,6 +338,7 @@ function App() {
 
       const { images } = await client.computeImages(range);
       applyImages(images);
+      await loadPanels3D(client);
 
       setLoadProgress(100);
       setLoadProgressLabel("Done!");
@@ -318,7 +347,7 @@ function App() {
         `Loaded ${foundPanels.length} panels — ${totalEvents.toLocaleString()} events`
       );
     },
-    [numBins, applyImages]
+    [numBins, applyImages, loadPanels3D]
   );
 
   const loadAllLauetofPanels = useCallback(
@@ -346,6 +375,7 @@ function App() {
       // Read first slice for all panels
       const { images } = await client.lauetofSlices(null);
       applyImages(images);
+      await loadPanels3D(client);
 
       setLoadProgress(100);
       setLoadProgressLabel("Done!");
@@ -354,7 +384,7 @@ function App() {
         `Loaded ${foundPanels.length} panels — slice 1/${foundPanels[0]?.shape[2] ?? 0} — ${totalCounts.toLocaleString()} counts`
       );
     },
-    []
+    [applyImages, loadPanels3D]
   );
 
   const handleFileLoaded = useCallback(
@@ -492,7 +522,7 @@ function App() {
       if (!client) return;
       const runId = beginRecompute(fileType);
       // Only the visible panel(s) need re-binning in single-panel mode.
-      const indices = viewMode === "overview" ? null : [viewMode];
+      const indices = typeof viewMode === "number" ? [viewMode] : null;
 
       void (async () => {
         try {
@@ -722,6 +752,7 @@ function App() {
               setLauetofPanels([]);
               detectorImagesRef.current = [];
               setDetectorImages([]);
+              setPanels3d([]);
               setTofRange([0, 0]);
               setTofAbsMin(0);
               setTofAbsMax(0);
@@ -752,13 +783,14 @@ function App() {
             <label>View:</label>
             <select
               ref={viewSelectRef}
-              value={viewMode === "overview" ? "overview" : String(viewMode)}
+              value={typeof viewMode === "number" ? String(viewMode) : viewMode}
               onChange={(e) => {
                 const v = e.target.value;
-                setViewMode(v === "overview" ? "overview" : Number(v));
+                setViewMode(v === "overview" || v === "3d" ? v : Number(v));
               }}
             >
               <option value="overview">Overview</option>
+              {panels3d.length > 0 && <option value="3d">3D instrument</option>}
               {(fileType === "NXlauetof" ? lauetofPanels : panels).map((p, i) => (
                 <option key={p.path} value={i}>
                   {p.name}
@@ -811,6 +843,21 @@ function App() {
               {imageComputing && fileType !== "NXlauetof" && (
                 <div className="computing-overlay">Recomputing...</div>
               )}
+              {is3D ? (
+                <Instrument3D
+                  height={chartSize}
+                  panels3d={panels3d}
+                  imagesByName={imagesByName}
+                  domain={sharedDomain}
+                  colorScale={colorScale}
+                  colorMap={colorMap}
+                  onSelect={(name) => {
+                    const list = fileType === "NXlauetof" ? lauetofPanels : panels;
+                    const i = list.findIndex((p) => p.name === name);
+                    if (i >= 0) setViewMode(i);
+                  }}
+                />
+              ) : (
               <div className={`detector-panels-grid ${isOverview ? "overview" : "single"}`}>
                 {(fileType === "NXlauetof" ? lauetofPanels : panels)
                   .map((panel, i) => ({ panel, i }))
@@ -858,6 +905,7 @@ function App() {
                     );
                   })}
               </div>
+              )}
               <div
                 ref={colorBarRef}
                 className={`shared-colorbar ${isOverview ? "shared-colorbar-overview" : "shared-colorbar-single"}`}
@@ -891,7 +939,7 @@ function App() {
                 </button>
               </div>
               {/* Draggable divider — resize the detector vs. the analysis column */}
-              {!isOverview && (
+              {!isOverview && !is3D && (
                 <div
                   className="panel-resizer"
                   style={{ width: RESIZER_WIDTH, height: chartSize }}
@@ -906,7 +954,7 @@ function App() {
               )}
               {/* Profile plots — line scan / box integration, plus box TOF profile.
                   Single-panel mode only. */}
-              {!isOverview && (
+              {!isOverview && !is3D && (
                 <div className="analysis-column" style={{ width: analysisWidth, maxHeight: chartSize + 36 }}>
                   <LineScanPlot
                     profile={boxProfile ?? lineScanProfile}

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { ScaleType } from "@h5web/lib";
 import type { ColorMap, ColorScaleType, Domain } from "@h5web/lib";
 import type { DetectorImageResult } from "../lib/event-data";
-import { LUTS } from "./ViridisColorBar";
+import { imageToRGBA } from "../lib/colormap";
 
 /**
  * Overview-grid panel drawn with Canvas2D instead of `HeatmapVis`.
@@ -24,25 +24,6 @@ interface Props {
   domain: Domain;
   colorScale?: ColorScaleType;
   colorMap?: ColorMap | "Greys_r";
-}
-
-/** Map a value to [0,1] within `domain` under the active colour scale. */
-function normalize(v: number, lo: number, hi: number, scale: ColorScaleType): number {
-  if (scale === ScaleType.Log) {
-    const sLo = Math.log10(Math.max(lo, 1e-6));
-    const sHi = Math.log10(Math.max(hi, 1e-6));
-    if (v <= 0 || sHi <= sLo) return 0;
-    return (Math.log10(v) - sLo) / (sHi - sLo);
-  }
-  if (scale === ScaleType.SymLog) {
-    const f = (x: number) => Math.sign(x) * Math.log10(1 + Math.abs(x));
-    const sLo = f(lo);
-    const sHi = f(hi);
-    if (sHi <= sLo) return 0;
-    return (f(v) - sLo) / (sHi - sLo);
-  }
-  if (hi <= lo) return 0;
-  return (v - lo) / (hi - lo);
 }
 
 export function PanelThumbnail({
@@ -72,27 +53,10 @@ export function PanelThumbnail({
 
     // Greys_r is a real LUT here, so the canvas is never CSS-inverted (the
     // WebGL path fakes it with filter: invert(1) because h5web has no
-    // reversed colormaps).
-    const lut = LUTS[colorMap] ?? LUTS["Viridis"];
+    // reversed colormaps). flipRows: canvas draws top-down, h5web puts
+    // detector row 0 at the bottom.
     const img = ctx.createImageData(cols, rows);
-    const px = img.data;
-
-    for (let r = 0; r < rows; r++) {
-      // h5web puts row 0 at the bottom; match that so a panel looks the same
-      // in the grid as it does in single-panel view.
-      const srcRow = rows - 1 - r;
-      for (let c = 0; c < cols; c++) {
-        const v = image[srcRow * cols + c];
-        const t = normalize(v, lo, hi, colorScale);
-        const idx = Math.max(0, Math.min(255, Math.round(t * 255)));
-        const [cr, cg, cb] = lut[idx];
-        const o = (r * cols + c) * 4;
-        px[o] = cr;
-        px[o + 1] = cg;
-        px[o + 2] = cb;
-        px[o + 3] = 255;
-      }
-    }
+    imageToRGBA(image, rows, cols, [lo, hi], colorScale, colorMap, true, img.data);
     ctx.putImageData(img, 0, 0);
   }, [image, rows, cols, lo, hi, colorScale, colorMap]);
 
