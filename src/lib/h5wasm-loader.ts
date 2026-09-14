@@ -275,6 +275,10 @@ export function parseInstrumentIdf(h5file: H5File): Map<string, IdfPanelGeometry
       //   <location ... name="bank1"> ... </location>
       // </component>
       for (const m of xml.matchAll(/<component\b([^>]*)>([\s\S]*?)<\/component>/g)) {
+        // A self-closing <component .../> has no body of its own, so the lazy
+        // match would run on to the next </component> and steal that
+        // component's locations. It carries no locations either way — skip it.
+        if (m[1].trimEnd().endsWith("/")) continue;
         const a = parseXmlAttrs(m[1]);
         const dims = a.type ? typeDims.get(a.type) : undefined;
         if (!dims || a.idstart === undefined) continue;

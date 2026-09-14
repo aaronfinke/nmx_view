@@ -163,7 +163,9 @@ function handleBoxTofProfile(
     if (!panel) throw new Error(`No NXlauetof panel at index ${panelIndex}`);
     const counts = readLauetofBoxTofProfile(requireFile(), panel.path, box);
     // Bins are fixed by the file, so the requested range is ignored here.
-    return { tof: panel.tofBins, counts };
+    // Copy: the reply transfers `tof`, which would detach the panel's cached
+    // tofBins inside the worker and break every later slice and profile.
+    return { tof: panel.tofBins.slice(), counts };
   }
   const ed = eventData.get(panelIndex);
   if (!ed) throw new Error(`No event data loaded for panel ${panelIndex}`);
