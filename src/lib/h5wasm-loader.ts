@@ -54,6 +54,52 @@ export async function openFile(file: File): Promise<H5File> {
   return new H5File(filename, "r");
 }
 
+const WORKERFS_MOUNT = "/work";
+let workerfsMounted = false;
+
+/**
+ * Open a file without copying it into memory.
+ *
+ * `openFile` reads the whole file into an ArrayBuffer and then copies that into
+ * the Emscripten heap — two full copies, against a wasm32 address space capped
+ * at 4 GB, so anything past ~1.5 GB dies before a single dataset is read.
+ * WORKERFS instead backs the mount with the `File` itself and reads only the
+ * chunks HDF5 asks for, which for a typical event file skips `event_index`
+ * entirely (over half the bytes on disk).
+ *
+ * Only available inside a Worker: WORKERFS asserts on `ENVIRONMENT_IS_WORKER`
+ * because it reads through `FileReaderSync`. Falls back to the copying path
+ * elsewhere, so this stays safe to call from anywhere.
+ */
+export async function openFileLazy(file: File): Promise<H5File> {
+  await initH5Wasm();
+  const fs = FS as unknown as {
+    filesystems: Record<string, unknown>;
+    mkdir(path: string): void;
+    mount(type: unknown, opts: unknown, mountpoint: string): void;
+    unmount(mountpoint: string): void;
+  };
+
+  const inWorker = typeof WorkerGlobalScope !== "undefined"
+    && typeof (globalThis as { FileReaderSync?: unknown }).FileReaderSync !== "undefined";
+  const workerfs = fs?.filesystems?.WORKERFS;
+  if (!inWorker || !workerfs) {
+    console.warn("WORKERFS unavailable — falling back to in-memory file copy");
+    return openFile(file);
+  }
+
+  // A mount pins its File, so drop the previous one before remounting.
+  if (workerfsMounted) {
+    try { fs.unmount(WORKERFS_MOUNT); } catch { /* already gone */ }
+    workerfsMounted = false;
+  }
+  try { fs.mkdir(WORKERFS_MOUNT); } catch { /* EEXIST */ }
+
+  fs.mount(workerfs, { files: [file] }, WORKERFS_MOUNT);
+  workerfsMounted = true;
+  return new H5File(`${WORKERFS_MOUNT}/${file.name}`, "r");
+}
+
 // ── File type detection ──────────────────────────────────────
 
 export type NexusFileType = "NXevent_data" | "NXlauetof" | "unknown";
@@ -165,6 +211,194 @@ export function detectFileType(h5file: H5File): NexusFileType {
   return "unknown";
 }
 
+// ── Mantid IDF geometry (instrument_xml) ─────────────────────
+
+/**
+ * Rectangular-detector geometry parsed from the Mantid IDF embedded at
+ * /entry/instrument/instrument_xml. SNS event files (MANDI, TOPAZ, ...) carry
+ * no detector_number and no x/y_pixel_offset on their NXdetector groups, so the
+ * IDF is the only record of the per-bank pixel grid and of the event-id origin
+ * (bank N's ids start at `idstart`, not at 0).
+ */
+export interface IdfPanelGeometry {
+  /** pixels along x (image columns) */
+  nx: number;
+  /** pixels along y (image rows) */
+  ny: number;
+  /** detector id of the panel's first pixel */
+  idStart: number;
+  /** id increment between successive rows (x steps) */
+  idStepByRow: number;
+  /** true when ids run along y before x (idfillbyfirst="y") */
+  fillByY: boolean;
+}
+
+/** Pull `name="value"` pairs out of a raw XML tag body. */
+function parseXmlAttrs(tagBody: string): Record<string, string> {
+  const attrs: Record<string, string> = {};
+  const re = /([A-Za-z_:][\w.:-]*)\s*=\s*"([^"]*)"/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(tagBody)) !== null) attrs[m[1]] = m[2];
+  return attrs;
+}
+
+const idfCache = new WeakMap<object, Map<string, IdfPanelGeometry>>();
+
+/**
+ * Parse the embedded Mantid IDF into a bank-name → geometry map.
+ * Returns an empty map for files with no instrument_xml (e.g. NMX).
+ */
+export function parseInstrumentIdf(h5file: H5File): Map<string, IdfPanelGeometry> {
+  const cached = idfCache.get(h5file as unknown as object);
+  if (cached) return cached;
+
+  const map = new Map<string, IdfPanelGeometry>();
+  const ds = h5file.get("entry/instrument/instrument_xml/data") as H5Dataset | null;
+  if (ds) {
+    const val = ds.value;
+    let xml = "";
+    if (typeof val === "string") xml = val;
+    else if (Array.isArray(val)) xml = val.join("");
+    else if (val instanceof Uint8Array) xml = new TextDecoder().decode(val);
+
+    if (xml) {
+      // <type ... xpixels="256" ypixels="256" name="panel1" is="rectangular_detector"/>
+      const typeDims = new Map<string, [number, number]>();
+      for (const m of xml.matchAll(/<type\b([^>]*)>/g)) {
+        const a = parseXmlAttrs(m[1]);
+        if (a.name && a.xpixels && a.ypixels) {
+          typeDims.set(a.name, [Number(a.xpixels), Number(a.ypixels)]);
+        }
+      }
+
+      // <component type="panel1" idstart="65536" idfillbyfirst="y" idstepbyrow="256">
+      //   <location ... name="bank1"> ... </location>
+      // </component>
+      for (const m of xml.matchAll(/<component\b([^>]*)>([\s\S]*?)<\/component>/g)) {
+        // A self-closing <component .../> has no body of its own, so the lazy
+        // match would run on to the next </component> and steal that
+        // component's locations. It carries no locations either way — skip it.
+        if (m[1].trimEnd().endsWith("/")) continue;
+        const a = parseXmlAttrs(m[1]);
+        const dims = a.type ? typeDims.get(a.type) : undefined;
+        if (!dims || a.idstart === undefined) continue;
+        const [nx, ny] = dims;
+        const fillByY = (a.idfillbyfirst ?? "y").toLowerCase() === "y";
+        const idStepByRow = a.idstepbyrow ? Number(a.idstepbyrow) : fillByY ? ny : nx;
+        const perPanel = nx * ny;
+        let i = 0;
+        for (const loc of m[2].matchAll(/<location\b([^>]*)>/g)) {
+          const la = parseXmlAttrs(loc[1]);
+          if (la.name) {
+            map.set(la.name, {
+              nx,
+              ny,
+              idStart: Number(a.idstart) + i * perPanel,
+              idStepByRow,
+              fillByY,
+            });
+          }
+          i++;
+        }
+      }
+    }
+  }
+
+  idfCache.set(h5file as unknown as object, map);
+  return map;
+}
+
+/** Most common pixel grid in the IDF — used for banks the IDF omits. */
+function idfMajorityGrid(
+  idf: Map<string, IdfPanelGeometry>
+): IdfPanelGeometry | null {
+  const tally = new Map<string, { g: IdfPanelGeometry; n: number }>();
+  for (const g of idf.values()) {
+    const key = `${g.nx}x${g.ny}:${g.idStepByRow}:${g.fillByY}`;
+    const e = tally.get(key);
+    if (e) e.n++;
+    else tally.set(key, { g, n: 1 });
+  }
+  let best: { g: IdfPanelGeometry; n: number } | null = null;
+  for (const e of tally.values()) if (!best || e.n > best.n) best = e;
+  return best ? { ...best.g, idStart: 0 } : null;
+}
+
+/**
+ * Resolve a bank's pixel grid from the IDF.
+ *
+ * Banks named in the IDF are used verbatim. Banks the IDF omits (MANDI's
+ * bank14, for instance) fall back to the instrument's majority grid with
+ * `idStart` snapped down to the enclosing id block. Returns null when the
+ * observed id span cannot fit that grid — which is how Mantid's synthetic
+ * `bank_error` (ids with bit 31 set, spanning every bank) gets rejected.
+ */
+export function resolveIdfGrid(
+  idf: Map<string, IdfPanelGeometry>,
+  bankName: string,
+  idRange: { min: number; max: number } | null
+): IdfPanelGeometry | null {
+  const exact = idf.get(bankName);
+  if (exact) return exact;
+  if (idf.size === 0 || !idRange) return null;
+
+  const base = idfMajorityGrid(idf);
+  if (!base) return null;
+  const perPanel = base.nx * base.ny;
+  if (idRange.max - idRange.min >= perPanel) return null;
+  const idStart = Math.floor(idRange.min / perPanel) * perPanel;
+  if (idRange.max - idStart >= perPanel) return null;
+  return { ...base, idStart };
+}
+
+/** Flat image index (row-major, [ny][nx]) → detector id, per the IDF layout. */
+export function buildIdfDetectorNumber(g: IdfPanelGeometry): Int32Array {
+  const { nx, ny, idStart, idStepByRow, fillByY } = g;
+  const out = new Int32Array(nx * ny);
+  for (let y = 0; y < ny; y++) {
+    for (let x = 0; x < nx; x++) {
+      out[y * nx + x] = fillByY
+        ? idStart + x * idStepByRow + y
+        : idStart + y * idStepByRow + x;
+    }
+  }
+  return out;
+}
+
+/** Min/max over an already-loaded event_id array. */
+export function eventIdRange(
+  arr: Uint32Array
+): { min: number; max: number } | null {
+  if (arr.length === 0) return null;
+  let min = Infinity;
+  let max = -Infinity;
+  for (let i = 0; i < arr.length; i++) {
+    const v = arr[i];
+    if (v < min) min = v;
+    if (v > max) max = v;
+  }
+  return isFinite(min) ? { min, max } : null;
+}
+
+/** Min/max detector id over a bounded sample of an event_id dataset. */
+export function sampleEventIdRange(
+  ds: H5Dataset,
+  maxSamples = 100000
+): { min: number; max: number } | null {
+  const n = ds.shape?.[0] ?? 0;
+  if (n === 0) return null;
+  const take = Math.min(n, maxSamples);
+  const raw = ds.slice([[0, take]]) as ArrayLike<number> | BigInt64Array;
+  let min = Infinity;
+  let max = -Infinity;
+  for (let i = 0; i < take; i++) {
+    const v = Number((raw as ArrayLike<number>)[i]);
+    if (v < min) min = v;
+    if (v > max) max = v;
+  }
+  return isFinite(min) ? { min, max } : null;
+}
+
 // ── NXevent_data panels ───────────────────────────────────────
 
 export interface DetectorPanelInfo {
@@ -180,6 +414,8 @@ export function findDetectorPanels(h5file: H5File): DetectorPanelInfo[] {
   const panels: DetectorPanelInfo[] = [];
   const instrument = h5file.get("entry/instrument");
   if (!instrument || !(instrument instanceof H5Group)) return panels;
+
+  const idf = parseInstrumentIdf(h5file);
 
   for (const key of instrument.keys()) {
     const child = instrument.get(key);
@@ -212,6 +448,24 @@ export function findDetectorPanels(h5file: H5File): DetectorPanelInfo[] {
         });
         continue;
       }
+
+      // No per-detector geometry at all: fall back to the embedded Mantid IDF,
+      // which also tells us where this bank's event ids start.
+      const grid = resolveIdfGrid(idf, key, sampleEventIdRange(eventIdDs));
+      if (grid) {
+        panels.push({
+          path: panelPath,
+          name: key,
+          numEvents: eventIdDs.shape![0],
+          detectorShape: [grid.ny, grid.nx],
+          pixelIdMin: grid.idStart,
+          pixelIdMax: grid.idStart + grid.nx * grid.ny - 1,
+        });
+        continue;
+      }
+      // An IDF exists but this group's ids fit no bank (Mantid's bank_error /
+      // bank_unmapped pseudo-detectors) — nothing sensible to render.
+      if (idf.size > 0) continue;
     }
 
     const detShape: [number, number] = detNumDs?.shape
@@ -232,10 +486,18 @@ export function findDetectorPanels(h5file: H5File): DetectorPanelInfo[] {
 }
 
 export interface EventData {
-  /** Pre-converted event pixel IDs (Float64) */
-  eventIdF64: Float64Array;
-  /** Pre-converted TOF values (Float64) */
-  tofF64: Float64Array;
+  /**
+   * Event pixel IDs. Uint32 rather than Float64: ids are integers, and 4 bytes
+   * holds every value a detector can produce exactly (up to 4.29e9), where
+   * Float32 would go inexact above 2^24 = 16,777,216.
+   */
+  eventId: Uint32Array;
+  /**
+   * TOF values in nanoseconds. Float32 costs 4 bytes and ~1e-7 relative
+   * precision — a few ns across a full pulse period, far below any bin width,
+   * and lossless for the float32 µs that event files typically store.
+   */
+  tof: Float32Array;
   detectorShape: [number, number];
   panelPixelIdMin: number;
   /** Cached pixel-to-flat-index mapping */
@@ -247,15 +509,48 @@ export interface EventData {
   tofMax: number;
 }
 
+/** Any numeric typed array h5wasm may hand back for an event dataset. */
+type RawEventArray = ArrayLike<number> | BigInt64Array | BigUint64Array;
+
+function isBigArray(arr: RawEventArray): arr is BigInt64Array | BigUint64Array {
+  return arr instanceof BigInt64Array || arr instanceof BigUint64Array;
+}
+
 /**
- * Convert BigInt64Array or Int32Array to Float64Array.
+ * Copy event ids into a Uint32Array, avoiding a conversion entirely when the
+ * file already stores uint32 (as NeXus event files normally do).
  */
-function toFloat64(arr: Int32Array | BigInt64Array): Float64Array {
-  const out = new Float64Array(arr.length);
-  if (arr instanceof BigInt64Array) {
-    for (let i = 0; i < arr.length; i++) out[i] = Number(arr[i]);
+function toUint32(arr: RawEventArray): Uint32Array {
+  if (arr instanceof Uint32Array) return arr;
+  const out = new Uint32Array(arr.length);
+  let overflow = false;
+  if (isBigArray(arr)) {
+    for (let i = 0; i < arr.length; i++) {
+      const v = Number(arr[i]);
+      if (v > 0xffffffff) overflow = true;
+      out[i] = v;
+    }
   } else {
-    for (let i = 0; i < arr.length; i++) out[i] = arr[i];
+    for (let i = 0; i < arr.length; i++) {
+      const v = arr[i];
+      if (v > 0xffffffff) overflow = true;
+      out[i] = v;
+    }
+  }
+  if (overflow) {
+    console.warn("Event ids exceed the uint32 range and were truncated");
+  }
+  return out;
+}
+
+/** Copy TOF values into a Float32Array, scaling to nanoseconds in the same pass. */
+function toFloat32Ns(arr: RawEventArray, factor: number): Float32Array {
+  if (factor === 1.0 && arr instanceof Float32Array) return arr;
+  const out = new Float32Array(arr.length);
+  if (isBigArray(arr)) {
+    for (let i = 0; i < arr.length; i++) out[i] = Number(arr[i]) * factor;
+  } else {
+    for (let i = 0; i < arr.length; i++) out[i] = arr[i] * factor;
   }
   return out;
 }
@@ -299,8 +594,13 @@ export function readEventData(h5file: H5File, panelPath: string): EventData {
   let detNumDs = h5file.get(`${panelPath}/detector_number`) as H5Dataset | null;
   if (!detNumDs) detNumDs = evGroup.get("detector_number") as H5Dataset | null;
 
-  const rawEventId = eventIdDs.value as Int32Array | BigInt64Array;
-  const rawTof = etoDs.value as Int32Array | BigInt64Array;
+  // Narrow to 4-byte arrays once, up front: ids are integers and TOF only ever
+  // needs float precision, so Float64 doubled the footprint for nothing. When
+  // the file already stores uint32 ids / float32 TOF these adopt without a copy.
+  console.time(`[${panelPath}] typed-array conversion`);
+  const eventId = toUint32(eventIdDs.value as RawEventArray);
+  const tof = toFloat32Ns(etoDs.value as RawEventArray, getTofToNsFactor(etoDs));
+  console.timeEnd(`[${panelPath}] typed-array conversion`);
 
   let detectorNumber: Int32Array;
   let detectorShape: [number, number];
@@ -317,48 +617,55 @@ export function readEventData(h5file: H5File, panelPath: string): EventData {
     // No detector_number — try to infer shape from x/y_pixel_offset
     const xOff = h5file.get(`${panelPath}/x_pixel_offset`) as H5Dataset | null;
     const yOff = h5file.get(`${panelPath}/y_pixel_offset`) as H5Dataset | null;
+    const idfGrid = xOff?.shape && yOff?.shape
+      ? null
+      : resolveIdfGrid(
+          parseInstrumentIdf(h5file),
+          panelPath.split("/").pop() ?? "",
+          eventIdRange(eventId)
+        );
+
     if (xOff?.shape && yOff?.shape) {
       const nx = xOff.shape.length === 1 ? xOff.shape[0] : xOff.shape[1] ?? xOff.shape[0];
       const ny = yOff.shape.length === 1 ? yOff.shape[0] : yOff.shape[0];
       detectorShape = [ny, nx];
+    } else if (idfGrid) {
+      // Mantid IDF geometry: gives both the pixel grid and the bank's id origin,
+      // and (for idfillbyfirst="y") the column-major id → pixel ordering.
+      detectorShape = [idfGrid.ny, idfGrid.nx];
     } else {
       detectorShape = [1280, 1280];
     }
-    // Build identity detector_number
-    const totalPx = detectorShape[0] * detectorShape[1];
-    detectorNumber = new Int32Array(totalPx);
-    for (let i = 0; i < totalPx; i++) detectorNumber[i] = i;
+
+    if (idfGrid) {
+      detectorNumber = buildIdfDetectorNumber(idfGrid);
+    } else {
+      // Build identity detector_number
+      const totalPx = detectorShape[0] * detectorShape[1];
+      detectorNumber = new Int32Array(totalPx);
+      for (let i = 0; i < totalPx; i++) detectorNumber[i] = i;
+    }
   }
 
-  // 1. Convert BigInt → Float64 (done once) + unit → ns
-  console.time(`[${panelPath}] BigInt→Float64`);
-  const eventIdF64 = toFloat64(rawEventId);
-  const tofF64 = toFloat64(rawTof);
-  const tofFactor = getTofToNsFactor(etoDs);
-  if (tofFactor !== 1.0) {
-    for (let i = 0; i < tofF64.length; i++) tofF64[i] *= tofFactor;
-  }
-  console.timeEnd(`[${panelPath}] BigInt→Float64`);
-
-  // 2. Find panelPixelIdMin
+  // Find panelPixelIdMin
   let panelPixelIdMin = Number.MAX_SAFE_INTEGER;
   for (let i = 0; i < detectorNumber.length; i++) {
     if (detectorNumber[i] < panelPixelIdMin) panelPixelIdMin = detectorNumber[i];
   }
 
-  // 3. Build + cache pixel map
+  // Build + cache pixel map
   const totalPixels = detectorShape[0] * detectorShape[1];
   console.time(`[${panelPath}] buildPixelMap`);
   const { pixelToFlat, isIdentity } = buildPixelMap(detectorNumber, panelPixelIdMin, totalPixels);
   console.timeEnd(`[${panelPath}] buildPixelMap`);
 
-  // 4. Find TOF bounds with a single O(N) pass
+  // Find TOF bounds with a single O(N) pass
   let tofMin = Infinity;
   let tofMax = -Infinity;
   console.time(`[${panelPath}] TOF bounds`);
 
-  for (let i = 0; i < tofF64.length; i++) {
-    const v = tofF64[i];
+  for (let i = 0; i < tof.length; i++) {
+    const v = tof[i];
     if (v < tofMin) tofMin = v;
     if (v > tofMax) tofMax = v;
   }
@@ -367,8 +674,8 @@ export function readEventData(h5file: H5File, panelPath: string): EventData {
   if (!isFinite(tofMin)) { tofMin = 0; tofMax = 0; }
   console.timeEnd(`[${panelPath}] total readEventData`);
   return {
-    eventIdF64,
-    tofF64,
+    eventId,
+    tof,
     detectorShape,
     panelPixelIdMin,
     pixelToFlat,

@@ -66,7 +66,8 @@ const GREYS_R_DATA = [
   [0.0, 0.0, 0.0],
 ];
 
-const LUTS: Record<string, [number, number, number][]> = {
+/** 256-entry RGB lookup tables, shared with the Canvas2D overview thumbnails. */
+export const LUTS: Record<string, [number, number, number][]> = {
   Viridis: buildLut(VIRIDIS_DATA),
   Inferno: buildLut(INFERNO_DATA),
   Greys: buildLut(GREYS_DATA),
