@@ -14,6 +14,7 @@ import type {
   ImagesResult,
   LauetofSlicesResult,
   TofProfileWire,
+  Panels3DResult,
 } from "./h5-worker-protocol";
 import type { BoxRegion } from "./event-data";
 
@@ -103,6 +104,10 @@ export class H5Client {
       numBins,
       tofRange,
     });
+  }
+
+  panels3d(): Promise<Panels3DResult> {
+    return this.send<"panels3d">({ op: "panels3d" });
   }
 
   close(): Promise<null> {

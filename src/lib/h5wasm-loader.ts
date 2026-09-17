@@ -231,6 +231,59 @@ export interface IdfPanelGeometry {
   idStepByRow: number;
   /** true when ids run along y before x (idfillbyfirst="y") */
   fillByY: boolean;
+  /** pixel pitch along x / y in metres, from the <type> element */
+  xStep?: number;
+  yStep?: number;
+  /** panel centre in the lab frame, from <location x y z> */
+  position?: [number, number, number];
+  /** nested <rot> elements in document order (outermost first) */
+  rotations?: { axis: [number, number, number]; deg: number }[];
+}
+
+/**
+ * Pull the `<location>` elements out of a `<component>` body together with the
+ * `<rot>` elements nested inside each one, in document order.
+ *
+ * Done by scanning rather than one regex because a location may be either
+ * `<location .../>` or `<location ...> <rot/>… </location>`, and the rotations
+ * belonging to it are exactly those inside its own body.
+ */
+function parseIdfLocations(body: string): {
+  attrs: Record<string, string>;
+  rotations: { axis: [number, number, number]; deg: number }[];
+}[] {
+  const out: {
+    attrs: Record<string, string>;
+    rotations: { axis: [number, number, number]; deg: number }[];
+  }[] = [];
+  const re = /<location\b/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(body)) !== null) {
+    const gt = body.indexOf(">", m.index);
+    if (gt < 0) break;
+    const tag = body.slice(m.index + "<location".length, gt);
+    const attrs = parseXmlAttrs(tag);
+    const rotations: { axis: [number, number, number]; deg: number }[] = [];
+
+    if (!tag.trimEnd().endsWith("/")) {
+      const close = body.indexOf("</location>", gt);
+      const inner = close < 0 ? "" : body.slice(gt + 1, close);
+      for (const r of inner.matchAll(/<rot\b([^>]*)>/g)) {
+        const ra = parseXmlAttrs(r[1]);
+        // Mantid rotates about z when no axis is given at all; otherwise a
+        // missing component is simply zero.
+        const hasAxis = "axis-x" in ra || "axis-y" in ra || "axis-z" in ra;
+        rotations.push({
+          axis: hasAxis
+            ? [Number(ra["axis-x"] ?? 0), Number(ra["axis-y"] ?? 0), Number(ra["axis-z"] ?? 0)]
+            : [0, 0, 1],
+          deg: Number(ra.val ?? 0),
+        });
+      }
+    }
+    out.push({ attrs, rotations });
+  }
+  return out;
 }
 
 /** Pull `name="value"` pairs out of a raw XML tag body. */
@@ -263,11 +316,19 @@ export function parseInstrumentIdf(h5file: H5File): Map<string, IdfPanelGeometry
 
     if (xml) {
       // <type ... xpixels="256" ypixels="256" name="panel1" is="rectangular_detector"/>
-      const typeDims = new Map<string, [number, number]>();
+      const typeDims = new Map<
+        string,
+        { nx: number; ny: number; xStep: number; yStep: number }
+      >();
       for (const m of xml.matchAll(/<type\b([^>]*)>/g)) {
         const a = parseXmlAttrs(m[1]);
         if (a.name && a.xpixels && a.ypixels) {
-          typeDims.set(a.name, [Number(a.xpixels), Number(a.ypixels)]);
+          typeDims.set(a.name, {
+            nx: Number(a.xpixels),
+            ny: Number(a.ypixels),
+            xStep: Number(a.xstep ?? 0),
+            yStep: Number(a.ystep ?? 0),
+          });
         }
       }
 
@@ -282,13 +343,13 @@ export function parseInstrumentIdf(h5file: H5File): Map<string, IdfPanelGeometry
         const a = parseXmlAttrs(m[1]);
         const dims = a.type ? typeDims.get(a.type) : undefined;
         if (!dims || a.idstart === undefined) continue;
-        const [nx, ny] = dims;
+        const { nx, ny, xStep, yStep } = dims;
         const fillByY = (a.idfillbyfirst ?? "y").toLowerCase() === "y";
         const idStepByRow = a.idstepbyrow ? Number(a.idstepbyrow) : fillByY ? ny : nx;
         const perPanel = nx * ny;
         let i = 0;
-        for (const loc of m[2].matchAll(/<location\b([^>]*)>/g)) {
-          const la = parseXmlAttrs(loc[1]);
+        for (const loc of parseIdfLocations(m[2])) {
+          const la = loc.attrs;
           if (la.name) {
             map.set(la.name, {
               nx,
@@ -296,6 +357,10 @@ export function parseInstrumentIdf(h5file: H5File): Map<string, IdfPanelGeometry
               idStart: Number(a.idstart) + i * perPanel,
               idStepByRow,
               fillByY,
+              xStep,
+              yStep,
+              position: [Number(la.x ?? 0), Number(la.y ?? 0), Number(la.z ?? 0)],
+              rotations: loc.rotations,
             });
           }
           i++;

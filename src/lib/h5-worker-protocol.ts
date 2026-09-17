@@ -13,11 +13,17 @@ import type {
   DetectorPanelInfo,
   LauetofPanelInfo,
 } from "./h5wasm-loader";
+import type { Panel3D } from "./panel3d";
 
 export interface OpenResult {
   fileType: NexusFileType;
   panels: DetectorPanelInfo[];
   lauetofPanels: LauetofPanelInfo[];
+}
+
+export interface Panels3DResult {
+  /** Empty when the file carries no resolvable panel geometry. */
+  panels3d: Panel3D[];
 }
 
 export interface LoadEventPanelsResult {
@@ -65,6 +71,7 @@ export type WorkerRequest =
       numBins: number;
       tofRange: [number, number] | null;
     }
+  | { id: number; op: "panels3d" }
   | { id: number; op: "close" };
 
 export type WorkerOp = WorkerRequest["op"];
@@ -76,6 +83,7 @@ export interface WorkerResultMap {
   computeImages: ImagesResult;
   lauetofSlices: LauetofSlicesResult;
   boxTofProfile: TofProfileWire;
+  panels3d: Panels3DResult;
   close: null;
 }
 
